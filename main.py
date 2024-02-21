@@ -512,7 +512,7 @@ if __name__ == "__main__":
             print("Train from scratch!")
         else:
             model.load_state_dict(torch.load(opt.pretrained_model,map_location='cpu')['state_dict'],strict=False)
-            print("Load Stable Diffusion v1-4!")
+            print(f"Load {opt.pretrained_model}!")
 
     # trainer and callbacks
     trainer_kwargs = dict()
