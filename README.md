@@ -1,4 +1,9 @@
-# Paint by Example: Exemplar-based Image Editing with Diffusion Models
+# mobi: Multimodal Object Insertion
+
+This is the base repository is based on "Paint by Example: Exemplar-based Image Editing with Diffusion Models"
+
+## Paint by Example: Exemplar-based Image Editing with Diffusion Models
+
 ![Teaser](figure/teaser.png)
 ### [Paper](https://arxiv.org/abs/2211.13227) | [Huggingface Demo](https://huggingface.co/spaces/Fantasy-Studio/Paint-by-Example) 
 <!-- <br> -->
