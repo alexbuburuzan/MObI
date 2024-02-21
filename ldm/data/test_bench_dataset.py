@@ -59,11 +59,15 @@ def get_tensor_clip(normalize=True, toTensor=True):
 
 
 class COCOImageDataset(data.Dataset):
-    def __init__(self,test_bench_dir):
+    def __init__(self, test_bench_dir, first_n=None):
 
         self.test_bench_dir=test_bench_dir
         self.id_list=np.load('test_bench/id_list.npy')
         self.id_list=self.id_list.tolist()
+
+        if first_n is not None:
+            self.id_list=self.id_list[:first_n]
+
         print("length of test bench",len(self.id_list))
         self.length=len(self.id_list)
 

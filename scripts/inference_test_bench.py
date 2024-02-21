@@ -243,6 +243,11 @@ def main():
         choices=["full", "autocast"],
         default="autocast"
     )
+    parser.add_argument(
+        "--first_n",
+        help="evaluate only on the first n samples",
+        type=int,
+    )
     opt = parser.parse_args()
 
     if opt.laion400m:
@@ -292,7 +297,7 @@ def main():
 
  
 
-    test_dataset=COCOImageDataset(test_bench_dir='test_bench')
+    test_dataset=COCOImageDataset(test_bench_dir='test_bench', first_n=opt.first_n)
     test_dataloader= torch.utils.data.DataLoader(test_dataset, 
                                         batch_size=batch_size, 
                                         num_workers=4, 
