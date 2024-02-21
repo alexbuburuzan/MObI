@@ -1,6 +1,6 @@
 # mobi: Multimodal Object Insertion
 
-This is the base repository is based on "Paint by Example: Exemplar-based Image Editing with Diffusion Models"
+This repository is based on "Paint by Example: Exemplar-based Image Editing with Diffusion Models"
 
 ## Paint by Example: Exemplar-based Image Editing with Diffusion Models
 
