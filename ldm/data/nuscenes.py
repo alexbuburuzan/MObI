@@ -10,6 +10,7 @@ import copy
 import pickle
 import random
 import numpy as np
+import pandas as pd
 from PIL import Image, ImageDraw
 
 import torch
@@ -19,7 +20,6 @@ import torchvision.transforms as T
 import torch.utils.data as data
 
 import albumentations as A
-import bezier
 
 
 def bbox_process(bbox):
@@ -55,14 +55,17 @@ class NuScenesDataset(data.Dataset):
     def __init__(
             self,
             state,
-            gt_database_path,
+            object_database_path,
+            scene_database_path,
             image_height=512,
             image_width=512,
     ) -> None:
         self.state = state
 
-        with open(gt_database_path, "rb") as f:
-            self.objects_meta = pickle.load(f)
+        self.objects_meta = pd.read_csv(object_database_path, index_col=0)
+
+        with open(scene_database_path, "rb") as f:
+            self.scenes_info = pickle.load(f)
 
         self.ref_augment = A.Compose([
             A.Resize(height=224, width=224),
@@ -74,11 +77,16 @@ class NuScenesDataset(data.Dataset):
         self.resize=T.Resize([image_height, image_width])
 
     def __getitem__(self, index):
-        object_meta = self.objects_meta[index]
-        mask_poly_lines = object_meta["mask_poly_lines"]
-        bbox_2d = object_meta["bbox_2d"]
+        object_meta = self.objects_meta.iloc[index]
+        scene_info = self.scenes_info[object_meta["scene_token"]]
 
-        image = Image.open(object_meta["image_path"]).convert("RGB")
+        with open(object_meta["object_info_path"], "rb") as f:
+            object_info = pickle.load(f)
+        
+        mask_poly_lines = object_info["mask_poly_lines"]
+        bbox_2d = object_info["bbox_2d"]
+
+        image = Image.open(scene_info["image_paths"][object_meta["cam_idx"]]).convert("RGB")
         image_np = np.array(image)
         image_tensor = get_tensor()(image)
         W, H = image.size
@@ -114,7 +122,7 @@ class NuScenesDataset(data.Dataset):
             "GT": image_tensor_resize,
             "inpaint_image": inpaint_tensor_resize,
             "inpaint_mask": mask_tensor_resize,
-            "ref_imgs": ref_image_tensor
+            "ref_imgs": ref_image_tensor,
         }
 
         return data

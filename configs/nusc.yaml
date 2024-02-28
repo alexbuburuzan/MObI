@@ -80,23 +80,26 @@ data:
           target: ldm.data.nuscenes.NuScenesDataset
           params:
               state: train
-              gt_database_path: data/nuscenes/nuscenes_dbinfos_pbe_train.pkl
-              image_height: 64
-              image_width: 64
+              object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_train.csv
+              scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_train.pkl
+              image_height: 512
+              image_width: 512
       validation:
           target: ldm.data.nuscenes.NuScenesDataset
           params:
               state: val
-              gt_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.pkl
-              image_height: 64
-              image_width: 64
+              object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.csv
+              scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
+              image_height: 512
+              image_width: 512
       test:
           target: ldm.data.nuscenes.NuScenesDataset
           params:
               state: test
-              gt_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.pkl
-              image_height: 64
-              image_width: 64
+              object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.csv
+              scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
+              image_height: 512
+              image_width: 512
 
 lightning:
   trainer:
