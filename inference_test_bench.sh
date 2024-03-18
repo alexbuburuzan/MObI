@@ -3,5 +3,4 @@ python scripts/inference_test_bench.py \
 --outdir results/test_bench \
 --config configs/v1.yaml \
 --ckpt checkpoints/model.ckpt \
---scale 5 \
---first_n 1
+--scale 5

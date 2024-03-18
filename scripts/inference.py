@@ -361,8 +361,6 @@ def main():
 
                 if not opt.skip_save:
                     for i,x_sample in enumerate(x_checked_image_torch):
-                        
-
                         all_img=[]
                         all_img.append(un_norm(image_tensor[i]).cpu())
                         all_img.append(un_norm(inpaint_image[i]).cpu())
@@ -376,8 +374,6 @@ def main():
                         img = Image.fromarray(grid.astype(np.uint8))
                         img = put_watermark(img, wm_encoder)
                         img.save(os.path.join(grid_path, 'grid-'+filename[:-4]+'_'+str(opt.seed)+'.png'))
-                        
-
 
                         x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
                         img = Image.fromarray(x_sample.astype(np.uint8))

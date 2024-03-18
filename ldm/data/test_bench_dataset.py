@@ -59,14 +59,11 @@ def get_tensor_clip(normalize=True, toTensor=True):
 
 
 class COCOImageDataset(data.Dataset):
-    def __init__(self, test_bench_dir, first_n=None):
+    def __init__(self, test_bench_dir):
 
         self.test_bench_dir=test_bench_dir
         self.id_list=np.load('test_bench/id_list.npy')
         self.id_list=self.id_list.tolist()
-
-        if first_n is not None:
-            self.id_list=self.id_list[:first_n]
 
         print("length of test bench",len(self.id_list))
         self.length=len(self.id_list)
@@ -101,7 +98,7 @@ class COCOImageDataset(data.Dataset):
 
         inpaint_tensor=image_tensor*mask_tensor
     
-        return image_tensor, {"inpaint_image":inpaint_tensor,"inpaint_mask":mask_tensor,"ref_imgs":ref_image_tensor},str(self.id_list[index]).zfill(12)
+        return image_tensor, {"inpaint_image":inpaint_tensor,"inpaint_mask":mask_tensor,"ref_img":ref_image_tensor},str(self.id_list[index]).zfill(12)
 
 
 
