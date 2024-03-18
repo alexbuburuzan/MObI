@@ -249,7 +249,7 @@ class OpenImageDataset(data.Dataset):
         mask_tensor_resize=T.Resize([self.args['image_size'],self.args['image_size']])(mask_tensor_cropped)
         inpaint_tensor_resize=image_tensor_resize*mask_tensor_resize
 
-        return {"GT":image_tensor_resize,"inpaint_image":inpaint_tensor_resize,"inpaint_mask":mask_tensor_resize,"ref_imgs":ref_image_tensor}
+        return {"GT":image_tensor_resize,"inpaint_image":inpaint_tensor_resize,"inpaint_mask":mask_tensor_resize,"ref_img":ref_image_tensor}
 
 
 

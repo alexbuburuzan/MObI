@@ -338,7 +338,7 @@ class DDPM(pl.LightningModule):
             x = batch['GT']
             mask = batch['inpaint_mask']
             inpaint = batch['inpaint_image']
-            reference = batch['ref_imgs']
+            reference = batch['ref_img']
         else:
             x = batch[k]
         if len(x.shape) == 3:
@@ -348,7 +348,7 @@ class DDPM(pl.LightningModule):
         mask = mask.to(memory_format=torch.contiguous_format).float()
         inpaint = inpaint.to(memory_format=torch.contiguous_format).float()
         reference = reference.to(memory_format=torch.contiguous_format).float()
-        return x,inpaint,mask,reference
+        return x, inpaint, mask, reference
 
     def shared_step(self, batch):
         x = self.get_input(batch, self.first_stage_key)
