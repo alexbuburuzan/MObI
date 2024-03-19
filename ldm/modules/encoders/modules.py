@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from functools import partial
 import clip
+import logging
 from einops import rearrange, repeat
 from transformers import CLIPTokenizer, CLIPTextModel,CLIPVisionModel,CLIPModel
 import kornia
@@ -29,7 +30,7 @@ class ClassEmbedder(nn.Module):
             key = self.key
         # this is for use in crossattn
         c = batch[key][:, None]
-        c = self.embedding(c)
+        c = self.embedding(c.to(torch.int))
         return c
 
 
@@ -167,12 +168,145 @@ class FrozenCLIPImageEmbedder(AbstractEncoder):
         z = self.final_ln(z)
         return z
 
-    def encode(self, image):
-        return self(image)
+    def encode(self, cond):
+        return {
+            "ref_image_token": self(cond["ref_image"]),
+        }
+    
+class BBoxAndClassEmbedder(AbstractEncoder):
+    def __init__(
+        self,
+        n_bbox_classes=10,
+        class_token_dim=768,
+        embedder_num_freqs=4,
+        proj_dims=[768, 512, 512, 768],
+    ):
+        super().__init__()
+        # BBox embedding
+        self.n_bbox_classes = n_bbox_classes
+        self.class_token_dim = class_token_dim
+
+        self.fourier_embedder = get_embedder(
+            input_dims=3,
+            num_freqs=embedder_num_freqs,
+        )
+        self.class_embedder = ClassEmbedder(class_token_dim, n_classes=n_bbox_classes)
+        self.bbox_proj = nn.Linear(
+            self.fourier_embedder.out_dim * 8, proj_dims[0])
+        self.second_linear = nn.Sequential(
+            nn.Linear(proj_dims[0] + class_token_dim, proj_dims[1]),
+            nn.SiLU(),
+            nn.Linear(proj_dims[1], proj_dims[2]),
+            nn.SiLU(),
+            nn.Linear(proj_dims[2], proj_dims[3]),
+        )
+
+        # null embedding
+        self.null_class_feature = torch.nn.Parameter(
+            torch.zeros([class_token_dim]))
+        self.null_pos_feature = torch.nn.Parameter(
+            torch.zeros([self.fourier_embedder.out_dim * 8]))
+        
+    def forward(self, bbox, class_label):
+        bbox_embed = self.fourier_embedder(bbox).reshape(
+            bbox.shape[0], -1).type_as(self.null_pos_feature)
+        bbox_embed = self.bbox_proj(bbox_embed)
+
+        class_embed = self.class_embedder({"class": class_label})
+        class_embed = class_embed.squeeze(1)
+
+        x = torch.cat([bbox_embed, class_embed], dim=-1)
+        x = self.second_linear(x)
+        return x.unsqueeze(1)
+    
+    def encode(self, cond):
+        return {
+            "ref_bbox_token": self(cond["ref_bbox"], cond["ref_label"]),
+        }
+
+class ReferenceEmbedder(AbstractEncoder):
+    def __init__(
+        self,
+        n_bbox_classes=10,
+        class_token_dim=768,
+        embedder_num_freqs=4,
+        proj_dims=[768, 512, 512, 768],
+    ):
+        super().__init__()
+
+        self.image_embedder = FrozenCLIPImageEmbedder()
+        self.bbox_embedder = BBoxAndClassEmbedder(
+            n_bbox_classes=n_bbox_classes,
+            class_token_dim=class_token_dim,
+            embedder_num_freqs=embedder_num_freqs,
+            proj_dims=proj_dims,
+        )
+
+        self.image_embedder.freeze()
+
+    def forward(self, cond):
+        image_token = self.image_embedder(cond["ref_image"])
+        bbox_token = self.bbox_embedder(cond["ref_bbox"], cond["ref_label"])
+
+        return image_token, bbox_token
+    
+    def encode(self, cond):
+        image_token, bbox_token = self(cond)
+        return {
+            "ref_image_token": image_token,
+            "ref_bbox_token": bbox_token,
+        }
+
+class Embedder:
+    """
+    borrow from
+    https://github.com/zju3dv/animatable_nerf/blob/master/lib/networks/embedder.py
+    """
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.create_embedding_fn()
+
+    def create_embedding_fn(self):
+        embed_fns = []
+        d = self.kwargs["input_dims"]
+        out_dim = 0
+        if self.kwargs["include_input"]:
+            embed_fns.append(lambda x: x)
+            out_dim += d
+
+        max_freq = self.kwargs["max_freq_log2"]
+        N_freqs = self.kwargs["num_freqs"]
+
+        if self.kwargs["log_sampling"]:
+            freq_bands = 2.0 ** torch.linspace(0.0, max_freq, steps=N_freqs)
+        else:
+            freq_bands = torch.linspace(2.0**0.0, 2.0**max_freq, steps=N_freqs)
+
+        for freq in freq_bands:
+            for p_fn in self.kwargs["periodic_fns"]:
+                embed_fns.append(lambda x, p_fn=p_fn, freq=freq: p_fn(x * freq))
+                out_dim += d
+
+        self.embed_fns = embed_fns
+        self.out_dim = out_dim
+
+    def __call__(self, inputs):
+        return torch.cat([fn(inputs) for fn in self.embed_fns], -1)
 
 
-
-
+def get_embedder(input_dims, num_freqs, include_input=True, log_sampling=True):
+    embed_kwargs = {
+        "input_dims": input_dims,
+        "num_freqs": num_freqs,
+        "max_freq_log2": num_freqs - 1,
+        "include_input": include_input,
+        "log_sampling": log_sampling,
+        "periodic_fns": [torch.sin, torch.cos],
+    }
+    embedder_obj = Embedder(**embed_kwargs)
+    logging.debug(f"embedder out dim = {embedder_obj.out_dim}")
+    return embedder_obj
 
 
 

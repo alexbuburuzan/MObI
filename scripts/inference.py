@@ -323,8 +323,11 @@ def main():
                 uc = None
                 if opt.scale != 1.0:
                     uc = model.learnable_vector
-                c = model.get_learned_conditioning(ref_tensor.to(torch.float16))
-                c = model.proj_out(c)
+
+                c = model.get_learned_conditioning({
+                    "ref_image": ref_tensor.to(torch.float16)
+                })
+
                 inpaint_mask=test_model_kwargs['inpaint_mask']
                 z_inpaint = model.encode_first_stage(test_model_kwargs['inpaint_image'])
                 z_inpaint = model.get_first_stage_encoding(z_inpaint).detach()

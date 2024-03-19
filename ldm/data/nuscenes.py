@@ -50,13 +50,13 @@ def get_tensor_clip(normalize=True, toTensor=True):
                                                 (0.26862954, 0.26130258, 0.27577711))]
     return torchvision.transforms.Compose(transform_list)
 
-def get_camera_coords(bbox_corners, transform):
+def get_image_coords(bbox_corners, lidar2image):
     """
     Get the camera coordinates of the 3D bounding box
 
     Args:
         bbox_corners: np.array, shape (8, 3)
-        transform: np.array, shape (4, 4)
+        lidar2image: np.array, shape (4, 4)
 
     Returns:
         np.array, shape (8, 2)
@@ -66,8 +66,8 @@ def get_camera_coords(bbox_corners, transform):
     coords = np.concatenate(
         [bbox_corners.reshape(-1, 3), np.ones((8, 1))], axis=-1
     )
-    transform = transform.copy().reshape(4, 4)
-    coords = coords @ transform.T
+    lidar2image = lidar2image.copy().reshape(4, 4)
+    coords = coords @ lidar2image.T
     coords = coords.reshape(8, 4)
 
     coords[..., 2] = np.clip(coords[..., 2], a_min=1e-5, a_max=1e5)
@@ -77,11 +77,33 @@ def get_camera_coords(bbox_corners, transform):
 
     return coords
 
+def get_camera_coords(bbox_corners, lidar2camera):
+    """
+    Get the camera coordinates of the 3D bounding box
+
+    Args:
+        bbox_corners: np.array, shape (8, 3)
+        lidar2camera: np.array, shape (4, 4)
+
+    Returns:
+        np.array, shape (8, 3)
+        Each row is the x, y, z coordinates of the 3D bounding box in the camera frame
+        z is the depth
+    """
+    coords = np.concatenate(
+        [bbox_corners.reshape(-1, 3), np.ones((8, 1))], axis=-1
+    )
+    lidar2camera = lidar2camera.copy().reshape(4, 4)
+    coords = coords @ lidar2camera.T
+    coords = coords.reshape(8, 4)
+
+    return coords[..., :3]
+
 def get_inpaint_mask(bbox_corners, transform, H, W, expand_ratio=0.1):
     bbox_corners = expand_bbox_corners(bbox_corners, expand_ratio)
     mask = np.zeros((H, W), dtype=np.uint8)
 
-    coords = get_camera_coords(bbox_corners, transform)
+    coords = get_image_coords(bbox_corners, transform)
 
     # Draw 3D boxes
     for polygon in [
@@ -151,7 +173,7 @@ def draw_projected_bbox(image, bbox_coords, color=(0, 165, 255), thickness=2):
 
 def get_2d_bbox(bbox_corners, transform, H, W, expand_ratio=0.1):
     bbox_corners = expand_bbox_corners(bbox_corners, expand_ratio)
-    coords = get_camera_coords(bbox_corners, transform)
+    coords = get_image_coords(bbox_corners, transform)
 
     minxy = np.min(coords, axis=-2)
     maxxy = np.max(coords, axis=-2)
@@ -246,6 +268,7 @@ class NuScenesDataset(data.Dataset):
         cam_idx = object_meta["cam_idx"]
         bbox_3d_corners = scene_info["gt_bboxes_3d_corners"][obj_idx]
         lidar2image = scene_info["lidar2image_transforms"][cam_idx]
+        lidar2camera = scene_info["lidar2camera_transforms"][cam_idx]
         image_path = scene_info["image_paths"][cam_idx]
 
         # Image
@@ -262,10 +285,11 @@ class NuScenesDataset(data.Dataset):
 
         # Reference info
         ref_label = scene_info["gt_labels"][obj_idx]
-        ref_bbox = get_camera_coords(bbox_3d_corners, lidar2image)
+        bbox_image_coords = get_image_coords(bbox_3d_corners, lidar2image)
         if self.normalize_bbox:
-            ref_bbox[..., 0] /= W
-            ref_bbox[..., 1] /= H
+            bbox_image_coords[..., 0] /= W
+            bbox_image_coords[..., 1] /= H
+        bbox_camera_coords = get_camera_coords(bbox_3d_corners, lidar2camera)
 
         # Mask
         mask_np = get_inpaint_mask(
@@ -283,9 +307,12 @@ class NuScenesDataset(data.Dataset):
             "GT": image_tensor,
             "inpaint_image": inpaint_tensor,
             "inpaint_mask": mask_tensor,
-            "ref_img": ref_image_tensor,
-            "ref_bbox": ref_bbox,
-            "ref_label": ref_label,
+            "bbox_image_coords": bbox_image_coords,
+            "cond": {
+                "ref_image": ref_image_tensor,
+                "ref_bbox": bbox_camera_coords,
+                "ref_label": ref_label,
+            }
         }
 
         return data

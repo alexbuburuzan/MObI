@@ -29,6 +29,8 @@ import time
 import random
 from torch.autograd import Variable
 
+from omegaconf.listconfig import ListConfig
+
 __conditioning_keys__ = {'concat': 'c_concat',
                          'crossattn': 'c_crossattn',
                          'adm': 'y'}
@@ -338,7 +340,7 @@ class DDPM(pl.LightningModule):
             x = batch['GT']
             mask = batch['inpaint_mask']
             inpaint = batch['inpaint_image']
-            reference = batch['ref_img']
+            cond = batch['cond']
         else:
             x = batch[k]
         if len(x.shape) == 3:
@@ -347,8 +349,8 @@ class DDPM(pl.LightningModule):
         x = x.to(memory_format=torch.contiguous_format).float()
         mask = mask.to(memory_format=torch.contiguous_format).float()
         inpaint = inpaint.to(memory_format=torch.contiguous_format).float()
-        reference = reference.to(memory_format=torch.contiguous_format).float()
-        return x, inpaint, mask, reference
+        cond = {k: v.to(memory_format=torch.contiguous_format).float() for k, v in cond.items()}
+        return x, inpaint, mask, cond
 
     def shared_step(self, batch):
         x = self.get_input(batch, self.first_stage_key)
@@ -462,7 +464,11 @@ class LatentDiffusion(DDPM):
         ckpt_path = kwargs.pop("ckpt_path", None)
         ignore_keys = kwargs.pop("ignore_keys", [])
         super().__init__(conditioning_key=conditioning_key, *args, **kwargs)
+    
+        # CFG
         self.learnable_vector = nn.Parameter(torch.randn((1,1,768)), requires_grad=True)
+        self.bbox_uncond_vector = nn.Parameter(torch.randn((1,1,768)), requires_grad=True)
+
         self.proj_out=nn.Linear(1024, 768)
         self.concat_mode = concat_mode
         self.cond_stage_trainable = cond_stage_trainable
@@ -475,8 +481,10 @@ class LatentDiffusion(DDPM):
             self.scale_factor = scale_factor
         else:
             self.register_buffer('scale_factor', torch.tensor(scale_factor))
+
         self.instantiate_first_stage(first_stage_config)
         self.instantiate_cond_stage(cond_stage_config)
+
         self.cond_stage_forward = cond_stage_forward
         self.clip_denoised = False
         self.bbox_tokenizer = None  
@@ -578,6 +586,10 @@ class LatentDiffusion(DDPM):
         else:
             assert hasattr(self.cond_stage_model, self.cond_stage_forward)
             c = getattr(self.cond_stage_model, self.cond_stage_forward)(c)
+
+        c["ref_image_token"] = self.proj_out(c["ref_image_token"])
+        c = torch.cat(list(c.values()), dim=1)
+
         return c
 
 
@@ -674,12 +686,12 @@ class LatentDiffusion(DDPM):
     def get_input(self, batch, k, return_first_stage_outputs=False, force_c_encode=False,
                   cond_key=None, return_original_cond=False, bs=None,get_mask=False,get_reference=False):
         
-        x,inpaint,mask,reference = super().get_input(batch, k)
+        x, inpaint, mask, cond = super().get_input(batch, k)
         if bs is not None:
             x = x[:bs]
             inpaint = inpaint[:bs]
             mask = mask[:bs]
-            reference = reference[:bs]
+            cond = {k: v[:bs] for k, v in cond.items()}
         x = x.to(self.device)
         encoder_posterior = self.encode_first_stage(x)
         z = self.get_first_stage_encoding(encoder_posterior).detach()
@@ -692,24 +704,16 @@ class LatentDiffusion(DDPM):
             if cond_key is None:
                 cond_key = self.cond_stage_key
             if cond_key != self.first_stage_key:
-                if cond_key in ['txt','caption', 'coordinates_bbox']:
-                    xc = batch[cond_key]
+                if isinstance(cond_key, ListConfig):
+                    xc = {k: cond[k].to(self.device) for k in cond_key}
                 elif cond_key == 'image':
-                    xc = reference
-                elif cond_key == 'class_label':
-                    xc = batch
+                    xc = {"ref_image": cond['ref_image'].to(self.device)}
                 else:
-                    xc = super().get_input(batch, cond_key).to(self.device)
+                    raise NotImplementedError
             else:
-                xc = x
+                raise NotImplementedError
             if not self.cond_stage_trainable or force_c_encode:
-                if isinstance(xc, dict) or isinstance(xc, list):
-                    # import pudb; pudb.set_trace()
-                    c = self.get_learned_conditioning(xc)
-                else:
-                    c = self.get_learned_conditioning(xc.to(self.device))
-                    c = self.proj_out(c)
-                    c = c.float()
+                c = self.get_learned_conditioning(xc)
             else:
                 c = xc
             if bs is not None:
@@ -738,7 +742,7 @@ class LatentDiffusion(DDPM):
         if get_mask:
             out.append(mask)
         if get_reference:
-            out.append(reference)
+            out.append(cond["ref_image"])
         return out
         
     @torch.no_grad()
@@ -916,7 +920,6 @@ class LatentDiffusion(DDPM):
             assert c is not None
             if self.cond_stage_trainable:
                 c = self.get_learned_conditioning(c)
-                c = self.proj_out(c)
                     
             if self.shorten_cond_schedule:  # TODO: drop this option
                 tc = self.cond_ids[t].to(self.device)
@@ -1300,7 +1303,7 @@ class LatentDiffusion(DDPM):
 
 
     @torch.no_grad()
-    def log_images(self, batch, N=4, n_row=4, sample=True, ddim_steps=200, ddim_eta=1., return_keys=None,
+    def log_images(self, batch, N=4, n_row=4, sample=True, ddim_steps=2, ddim_eta=1., return_keys=None,
                    quantize_denoised=True, inpaint=False, plot_denoise_rows=False, plot_progressive_rows=False,
                    plot_diffusion_rows=True, **kwargs):
 
@@ -1421,18 +1424,23 @@ class LatentDiffusion(DDPM):
 
     def configure_optimizers(self):
         lr = self.learning_rate
-        params = list(self.model.parameters())
+        params = []
 
-
+        for param, name in self.model.named_parameters():
+            if "multiview" in name:
+                print(param)
+                params.append(param)
 
         if self.cond_stage_trainable:
-            print(f"{self.__class__.__name__}: Also optimizing conditioner params!")
-            params = params + list(self.cond_stage_model.final_ln.parameters())+list(self.cond_stage_model.mapper.parameters())+list(self.proj_out.parameters())
+            print(f"{self.__class__.__name__}: optimizing bbox conditioning params!")
+            params += list(self.cond_stage_model.bbox_embedder.parameters())
+            
         if self.learn_logvar:
             print('Diffusion model optimizing logvar')
             params.append(self.logvar)
-        params.append(self.learnable_vector)
+        params.append(self.bbox_uncond_vector)
         opt = torch.optim.AdamW(params, lr=lr)
+
         if self.use_scheduler:
             assert 'target' in self.scheduler_config
             scheduler = instantiate_from_config(self.scheduler_config)

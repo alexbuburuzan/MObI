@@ -349,24 +349,15 @@ def main():
                 for batch in tqdm(test_dataloader):
                     segment_id_batch = batch["id_name"]
                     image_tensor = batch["GT"]
-                    test_model_kwargs = {k: v for k, v in batch.items() if k not in ['id_name', 'GT']}
+                    test_model_kwargs = {k: v for k, v in batch.items() if k in ["inpaint_image", "inpaint_mask"]}
                     test_model_kwargs = {n: test_model_kwargs[n].to(device,non_blocking=True) for n in test_model_kwargs}
+                    cond = batch["cond"]
+                    cond = {n: cond[n].to(device,non_blocking=True) for n in cond}
 
                     uc = None
                     if opt.scale != 1.0:
                         uc = model.learnable_vector.repeat(image_tensor.shape[0],1,1)
-                    c = model.get_learned_conditioning(test_model_kwargs['ref_img'].squeeze(1).to(torch.float16))
-                    if c.shape[-1]==1024:
-                        c = model.proj_out(c)
-                    if len(c.shape)==2:
-                        c = c.unsqueeze(1)
-
-                    # conds["ref_img_token"] = model.proj_out(conds["ref_img_token"])
-                    # conds = torch.stack([
-                    #     conds["ref_img_token"],
-                    #     conds["ref_bbox_token"],
-                    # ])
-                    # assert len(conds.shape) == 3
+                    c = model.get_learned_conditioning(cond)
 
                     inpaint_image=test_model_kwargs['inpaint_image']
                     inpaint_mask=test_model_kwargs['inpaint_mask']
@@ -407,7 +398,7 @@ def main():
 
                     if not opt.skip_save:
                         for i,x_sample in enumerate(x_checked_image_torch):
-                            ref_bbox = test_model_kwargs['ref_bbox'][i].cpu().numpy()
+                            ref_bbox = batch['bbox_image_coords'][i].cpu().numpy()
 
                             GT_img = un_norm(image_tensor[i]).cpu().numpy().transpose(1, 2, 0)
                             GT_img = (GT_img * 255).astype(np.uint8)[..., ::-1]
@@ -417,9 +408,9 @@ def main():
                             inpaint_img = (inpaint_img * 255).astype(np.uint8)[..., ::-1]
                             inpaint_img = draw_projected_bbox(inpaint_img, ref_bbox)
 
-                            ref_img = test_model_kwargs['ref_img'].squeeze(1)
-                            ref_img = un_norm_clip(ref_img[i]).cpu().numpy().transpose(1, 2, 0)
-                            ref_img = (ref_img * 255).astype(np.uint8)[..., ::-1]
+                            ref_image = cond['ref_image'].squeeze(1)
+                            ref_image = un_norm_clip(ref_image[i]).cpu().numpy().transpose(1, 2, 0)
+                            ref_image = (ref_image * 255).astype(np.uint8)[..., ::-1]
 
                             pred_img = resize(x_sample).cpu().numpy().transpose(1, 2, 0)
                             pred_img = (pred_img * 255).astype(np.uint8)[..., ::-1]
@@ -427,16 +418,16 @@ def main():
 
                             mask = inpaint_mask[i].cpu().numpy().transpose(1, 2, 0)
 
-                            all_img=[GT_img, inpaint_img, ref_img, pred_img]
+                            all_img=[GT_img, inpaint_img, ref_image, pred_img]
                             
                             grid = np.concatenate(all_img, axis=1)
 
-                            cv2.imwrite(os.path.join(sample_path, segment_id_batch[i]+"_GT.png"), GT_img)
-                            cv2.imwrite(os.path.join(sample_path, segment_id_batch[i]+"_inpaint.png"), inpaint_img)
-                            cv2.imwrite(os.path.join(sample_path, segment_id_batch[i]+"_ref.png"), ref_img)
-                            cv2.imwrite(os.path.join(result_path, segment_id_batch[i]+".png"), pred_img)
-                            cv2.imwrite(os.path.join(sample_path, segment_id_batch[i]+"_mask.png"), mask)
-                            cv2.imwrite(os.path.join(grid_path, 'grid-'+segment_id_batch[i]+'.png'), grid)
+                            cv2.imwrite(os.path.join(sample_path, segment_id_batch[i] + "_GT.png"), GT_img)
+                            cv2.imwrite(os.path.join(sample_path, segment_id_batch[i] + "_inpaint.png"), inpaint_img)
+                            cv2.imwrite(os.path.join(sample_path, segment_id_batch[i] + "_ref.png"), ref_image)
+                            cv2.imwrite(os.path.join(result_path, segment_id_batch[i] + ".png"), pred_img)
+                            cv2.imwrite(os.path.join(sample_path, segment_id_batch[i] + "_mask.png"), mask)
+                            cv2.imwrite(os.path.join(grid_path, 'grid-' + segment_id_batch[i] + '.png'), grid)
                             base_count += 1
 
                     if not opt.skip_grid:
