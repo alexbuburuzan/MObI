@@ -181,7 +181,7 @@ class PLMSSampler(object):
             else:
                 x_in = torch.cat([x] * 2)
                 t_in = torch.cat([t] * 2)
-                c_in = torch.cat([unconditional_conditioning, c])
+                c_in = torch.cat([unconditional_conditioning, c]) # batch concatenation
                 e_t_uncond, e_t = self.model.apply_model(x_in, t_in, c_in).chunk(2)
                 e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
 

@@ -155,10 +155,6 @@ class FrozenCLIPImageEmbedder(AbstractEncoder):
         self.transformer = self.transformer.eval()
         for param in self.parameters():
             param.requires_grad = False
-        for param in self.mapper.parameters():
-            param.requires_grad = True
-        for param in self.final_ln.parameters():
-            param.requires_grad = True
 
     def forward(self, image):
         outputs = self.transformer(pixel_values=image)
@@ -241,8 +237,6 @@ class ReferenceEmbedder(AbstractEncoder):
             embedder_num_freqs=embedder_num_freqs,
             proj_dims=proj_dims,
         )
-
-        self.image_embedder.freeze()
 
     def forward(self, cond):
         image_token = self.image_embedder(cond["ref_image"])

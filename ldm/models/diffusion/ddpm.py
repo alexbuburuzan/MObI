@@ -466,10 +466,10 @@ class LatentDiffusion(DDPM):
         super().__init__(conditioning_key=conditioning_key, *args, **kwargs)
     
         # CFG
-        self.learnable_vector = nn.Parameter(torch.randn((1,1,768)), requires_grad=True)
+        self.learnable_vector = nn.Parameter(torch.randn((1,1,768)), requires_grad=False)
         self.bbox_uncond_vector = nn.Parameter(torch.randn((1,1,768)), requires_grad=True)
 
-        self.proj_out=nn.Linear(1024, 768)
+        self.proj_out=nn.Linear(1024, 768).requires_grad_(False)
         self.concat_mode = concat_mode
         self.cond_stage_trainable = cond_stage_trainable
         self.cond_stage_key = cond_stage_key
@@ -525,7 +525,7 @@ class LatentDiffusion(DDPM):
         if self.shorten_cond_schedule:
             self.make_cond_schedule()
 
-    def instantiate_first_stage(self, config):
+    def instantiate_first_stage(self, config): # this
         model = instantiate_from_config(config)
         self.first_stage_model = model.eval()
         self.first_stage_model.train = disabled_train
@@ -552,6 +552,11 @@ class LatentDiffusion(DDPM):
             assert config != '__is_unconditional__'
             model = instantiate_from_config(config)
             self.cond_stage_model = model
+            for param in self.cond_stage_model.parameters():
+                param.requires_grad = False
+            if hasattr(self.cond_stage_model, "bbox_embedder"):
+                for param in self.cond_stage_model.bbox_embedder.parameters():
+                    param.requires_grad = True
 
 
     def _get_denoise_row_from_list(self, samples, desc='', force_no_decoder_quantization=False):
@@ -926,9 +931,12 @@ class LatentDiffusion(DDPM):
                 c = self.q_sample(x_start=c, t=tc, noise=torch.randn_like(c.float()))
 
         if self.u_cond_prop<self.u_cond_percent:
-            return self.p_losses(x, self.learnable_vector.repeat(x.shape[0],1,1), t, *args, **kwargs)
-        else:
-            return self.p_losses(x, c, t, *args, **kwargs)
+            c = torch.cat([
+                self.learnable_vector.repeat(x.shape[0],1,1),
+                self.bbox_uncond_vector.repeat(x.shape[0],1,1),
+            ], dim=1)
+
+        return self.p_losses(x, c, t, *args, **kwargs)
 
     def _rescale_annotations(self, bboxes, crop_coordinates):  # TODO: move to dataset
         def rescale_bbox(bbox):
@@ -1426,9 +1434,8 @@ class LatentDiffusion(DDPM):
         lr = self.learning_rate
         params = []
 
-        for param, name in self.model.named_parameters():
+        for name, param in self.model.named_parameters():
             if "multiview" in name:
-                print(param)
                 params.append(param)
 
         if self.cond_stage_trainable:
@@ -1439,6 +1446,7 @@ class LatentDiffusion(DDPM):
             print('Diffusion model optimizing logvar')
             params.append(self.logvar)
         params.append(self.bbox_uncond_vector)
+
         opt = torch.optim.AdamW(params, lr=lr)
 
         if self.use_scheduler:
@@ -1468,7 +1476,14 @@ class LatentDiffusion(DDPM):
 class DiffusionWrapper(pl.LightningModule):
     def __init__(self, diff_model_config, conditioning_key):
         super().__init__()
-        self.diffusion_model = instantiate_from_config(diff_model_config)
+        self.diffusion_model = instantiate_from_config(diff_model_config).eval()
+        # freeze previous layers
+        for name, param in self.diffusion_model.named_parameters():
+            if "multiview" in name:
+                param.requires_grad = True
+            else:
+                param.requires_grad = False
+
         self.conditioning_key = conditioning_key
         assert self.conditioning_key in [None, 'concat', 'crossattn', 'hybrid', 'adm']
 

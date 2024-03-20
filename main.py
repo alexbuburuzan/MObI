@@ -22,6 +22,13 @@ from ldm.util import instantiate_from_config
 import socket
 from pytorch_lightning.plugins.environments import ClusterEnvironment,SLURMEnvironment
 
+import logging
+import warnings
+# Suppress all warnings
+warnings.filterwarnings("ignore")
+
+logging.getLogger("PIL").setLevel(logging.WARN)
+
 def get_parser(**parser_kwargs):
     def str2bool(v):
         if isinstance(v, bool):
@@ -379,7 +386,9 @@ class ImageLogger(Callback):
                            pl_module.global_step, pl_module.current_epoch, batch_idx)
 
             logger_log_images = self.logger_log_images.get(logger, lambda *args, **kwargs: None)
-            logger_log_images(pl_module, images, pl_module.global_step, split)
+
+            step = pl_module.global_step if split == "train" else pl_module.global_step + batch_idx
+            logger_log_images(pl_module, images, step, split)
 
             if is_train:
                 pl_module.train()
@@ -390,7 +399,6 @@ class ImageLogger(Callback):
             try:
                 self.log_steps.pop(0)
             except IndexError as e:
-                print(e)
                 pass
             return True
         return False
@@ -400,7 +408,7 @@ class ImageLogger(Callback):
             self.log_img(pl_module, batch, batch_idx, split="train")
 
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
-        if not self.disabled and pl_module.global_step > 0:
+        if not self.disabled and (pl_module.global_step > 0 or self.log_first_step):
             self.log_img(pl_module, batch, batch_idx, split="val")
         if hasattr(pl_module, 'calibrate_grad_norm'):
             if (pl_module.calibrate_grad_norm and batch_idx % 25 == 0) and batch_idx > 0:
@@ -586,9 +594,11 @@ if __name__ == "__main__":
         "image_logger": {
             "target": "main.ImageLogger",
             "params": {
-                "batch_frequency": 500,
+                "batch_frequency": 100,
                 "max_images": 4,
-                "clamp": True
+                "clamp": True,
+                "log_on_batch_idx": True,
+                "log_first_step": True,
             }
         },
         "learning_rate_logger": {

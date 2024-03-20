@@ -352,7 +352,7 @@ def main():
                     test_model_kwargs = {k: v for k, v in batch.items() if k in ["inpaint_image", "inpaint_mask"]}
                     test_model_kwargs = {n: test_model_kwargs[n].to(device,non_blocking=True) for n in test_model_kwargs}
                     cond = batch["cond"]
-                    cond = {n: cond[n].to(device,non_blocking=True) for n in cond}
+                    cond = {k: v.to(device,non_blocking=True) for k, v in cond.items() if k in model.cond_stage_key}
 
                     uc = None
                     if opt.scale != 1.0:

@@ -200,9 +200,15 @@ class BasicTransformerBlock(nn.Module):
         self.ff = FeedForward(dim, dropout=dropout, glu=gated_ff)
         self.attn2 = CrossAttention(query_dim=dim, context_dim=context_dim,
                                     heads=n_heads, dim_head=d_head, dropout=dropout)  # is self-attn if context is none
+        self.multiview_attn = zero_module(
+            CrossAttention(query_dim=dim, context_dim=context_dim,
+                           heads=n_heads, dim_head=d_head, dropout=dropout)
+        )
+
         self.norm1 = nn.LayerNorm(dim)
         self.norm2 = nn.LayerNorm(dim)
         self.norm3 = nn.LayerNorm(dim)
+        self.multiview_norm = zero_module(nn.LayerNorm(dim))
         self.checkpoint = checkpoint
 
     def forward(self, x, context=None):
@@ -211,6 +217,10 @@ class BasicTransformerBlock(nn.Module):
     def _forward(self, x, context=None):
         x = self.attn1(self.norm1(x)) + x
         x = self.attn2(self.norm2(x), context=context) + x
+
+        # Zero-initialised trainable attention layer
+        x = self.multiview_attn(self.multiview_norm(x), context=context) + x
+
         x = self.ff(self.norm3(x)) + x
         return x
 

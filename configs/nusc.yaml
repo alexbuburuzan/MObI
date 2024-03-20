@@ -72,7 +72,7 @@ model:
           target: torch.nn.Identity
 
     cond_stage_config:
-      target: ldm.modules.encoders.modules.ReferenceEmbedder
+      target: ldm.modules.encoders.modules.ReferenceEmbedder #FrozenCLIPImageEmbedder
 
 data:
   target: main.DataModuleFromConfig
@@ -85,8 +85,16 @@ data:
               state: train
               object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_train.csv
               scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_train.pkl
+              expand_mask_ratio: 0.1
+              expand_ref_ratio: 0.1
+              camera_visibility_min: 0.7
+              ref_aug: True
+              ref_mode: same-ref
               image_height: 512
               image_width: 512
+              reference_image_min_w: 200
+              reference_image_min_h: 200
+              frustum_iou_max: 0.5
               object_classes:
                 - car
                 - truck
@@ -104,8 +112,16 @@ data:
               state: val
               object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.csv
               scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
+              expand_mask_ratio: 0.1
+              expand_ref_ratio: 0.1
+              camera_visibility_min: 0.7
+              ref_aug: True
+              ref_mode: same-ref
               image_height: 512
               image_width: 512
+              reference_image_min_w: 200
+              reference_image_min_h: 200
+              frustum_iou_max: 0.5
               object_classes:
                 - car
                 - truck
