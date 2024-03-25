@@ -593,9 +593,14 @@ class LatentDiffusion(DDPM):
             c = getattr(self.cond_stage_model, self.cond_stage_forward)(c)
 
         c["ref_image_token"] = self.proj_out(c["ref_image_token"])
-        c = torch.cat(list(c.values()), dim=1)
+        cond = []
+        if "ref_image" in self.cond_stage_key:
+            cond.append(c["ref_image_token"])
+        if "ref_bbox" in self.cond_stage_key:
+            cond.append(c["ref_bbox_token"])
+        cond = torch.cat(cond, dim=1)
 
-        return c
+        return cond
 
 
     def meshgrid(self, h, w):
@@ -931,10 +936,10 @@ class LatentDiffusion(DDPM):
                 c = self.q_sample(x_start=c, t=tc, noise=torch.randn_like(c.float()))
 
         if self.u_cond_prop<self.u_cond_percent:
-            c = torch.cat([
-                self.learnable_vector.repeat(x.shape[0],1,1),
-                self.bbox_uncond_vector.repeat(x.shape[0],1,1),
-            ], dim=1)
+            c = [self.learnable_vector.repeat(x.shape[0],1,1)]
+            if "ref_bbox" in self.cond_stage_key:
+                c.append(self.bbox_uncond_vector.repeat(x.shape[0],1,1))
+            c = torch.cat(c, dim=1)
 
         return self.p_losses(x, c, t, *args, **kwargs)
 
@@ -1311,7 +1316,7 @@ class LatentDiffusion(DDPM):
 
 
     @torch.no_grad()
-    def log_images(self, batch, N=4, n_row=4, sample=True, ddim_steps=2, ddim_eta=1., return_keys=None,
+    def log_images(self, batch, N=4, n_row=4, sample=True, ddim_steps=50, ddim_eta=1., return_keys=None,
                    quantize_denoised=True, inpaint=False, plot_denoise_rows=False, plot_progressive_rows=False,
                    plot_diffusion_rows=True, **kwargs):
 
@@ -1331,7 +1336,7 @@ class LatentDiffusion(DDPM):
         log["inputs"] = x
         log["reconstruction"] = xrec
         log["mask"]=mask
-        # log["reference"]=reference
+        log["reference"]=reference
         if self.model.conditioning_key is not None:
             if hasattr(self.cond_stage_model, "decode"):
                 xc = self.cond_stage_model.decode(c)
@@ -1439,13 +1444,14 @@ class LatentDiffusion(DDPM):
                 params.append(param)
 
         if self.cond_stage_trainable:
-            print(f"{self.__class__.__name__}: optimizing bbox conditioning params!")
-            params += list(self.cond_stage_model.bbox_embedder.parameters())
+            if "ref_bbox" in self.cond_stage_key:
+                print(f"{self.__class__.__name__}: optimizing bbox conditioning params!")
+                params += list(self.cond_stage_model.bbox_embedder.parameters())
+                params.append(self.bbox_uncond_vector)
             
         if self.learn_logvar:
             print('Diffusion model optimizing logvar')
             params.append(self.logvar)
-        params.append(self.bbox_uncond_vector)
 
         opt = torch.optim.AdamW(params, lr=lr)
 
@@ -1477,12 +1483,13 @@ class DiffusionWrapper(pl.LightningModule):
     def __init__(self, diff_model_config, conditioning_key):
         super().__init__()
         self.diffusion_model = instantiate_from_config(diff_model_config).eval()
-        # freeze previous layers
+
         for name, param in self.diffusion_model.named_parameters():
             if "multiview" in name:
                 param.requires_grad = True
             else:
-                param.requires_grad = False
+                # TODO: fix gradient checkpointing and set to False
+                param.requires_grad = True
 
         self.conditioning_key = conditioning_key
         assert self.conditioning_key in [None, 'concat', 'crossattn', 'hybrid', 'adm']

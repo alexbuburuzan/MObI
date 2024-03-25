@@ -215,8 +215,12 @@ class BasicTransformerBlock(nn.Module):
         return checkpoint(self._forward, (x, context), self.parameters(), self.checkpoint)
 
     def _forward(self, x, context=None):
+        image_token = context
+        if exists(context) and context.shape[1] > 1:
+            image_token = context[:, [0]]
+ 
         x = self.attn1(self.norm1(x)) + x
-        x = self.attn2(self.norm2(x), context=context) + x
+        x = self.attn2(self.norm2(x), context=image_token) + x
 
         # Zero-initialised trainable attention layer
         x = self.multiview_attn(self.multiview_norm(x), context=context) + x

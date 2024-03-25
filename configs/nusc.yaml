@@ -72,7 +72,12 @@ model:
           target: torch.nn.Identity
 
     cond_stage_config:
-      target: ldm.modules.encoders.modules.ReferenceEmbedder #FrozenCLIPImageEmbedder
+      target: ldm.modules.encoders.modules.FrozenCLIPImageEmbedder
+      params:
+        conditions:
+          - "ref_image"
+          - "ref_bbox"
+          - "ref_label"
 
 data:
   target: main.DataModuleFromConfig

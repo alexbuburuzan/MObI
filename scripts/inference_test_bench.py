@@ -356,7 +356,10 @@ def main():
 
                     uc = None
                     if opt.scale != 1.0:
-                        uc = model.learnable_vector.repeat(image_tensor.shape[0],1,1)
+                        uc = [model.learnable_vector.repeat(image_tensor.shape[0],1,1)]
+                        if "ref_bbox" in model.cond_stage_key:
+                            uc.append(model.bbox_uncond_vector.repeat(image_tensor.shape[0],1,1))
+                        uc = torch.cat(uc, dim=1)
                     c = model.get_learned_conditioning(cond)
 
                     inpaint_image=test_model_kwargs['inpaint_image']

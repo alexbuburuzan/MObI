@@ -138,16 +138,19 @@ class SpatialRescaler(nn.Module):
 
 class FrozenCLIPImageEmbedder(AbstractEncoder):
     """Uses the CLIP transformer encoder for text (from Hugging Face)"""
-    def __init__(self, version="openai/clip-vit-large-patch14"):
+    def __init__(
+            self,
+            conditions,
+            version="openai/clip-vit-large-patch14",
+    ) -> None:
         super().__init__()
-        self.transformer = CLIPVisionModel.from_pretrained(version)
-        self.final_ln = LayerNorm(1024)
-        self.mapper = Transformer(
-                1,
-                1024,
-                5,
-                1,
-            )
+        if "ref_image" in conditions:
+            self.transformer = CLIPVisionModel.from_pretrained(version)
+            self.final_ln = LayerNorm(1024)
+            self.mapper = Transformer(1, 1024, 5, 1)
+        
+        if "ref_bbox" in conditions and "ref_label" in conditions:
+            self.bbox_embedder = BBoxAndClassEmbedder()
 
         self.freeze()
 
@@ -165,9 +168,15 @@ class FrozenCLIPImageEmbedder(AbstractEncoder):
         return z
 
     def encode(self, cond):
-        return {
-            "ref_image_token": self(cond["ref_image"]),
-        }
+        ret = {}
+        if "ref_image" in cond:
+            ret["ref_image_token"] = self(cond["ref_image"])
+        if "ref_bbox" in cond and "ref_label" in cond:
+            ret["ref_bbox_token"] = self.bbox_embedder(
+                cond["ref_bbox"],
+                cond["ref_label"],
+            )
+        return ret
     
 class BBoxAndClassEmbedder(AbstractEncoder):
     def __init__(
@@ -196,16 +205,10 @@ class BBoxAndClassEmbedder(AbstractEncoder):
             nn.SiLU(),
             nn.Linear(proj_dims[2], proj_dims[3]),
         )
-
-        # null embedding
-        self.null_class_feature = torch.nn.Parameter(
-            torch.zeros([class_token_dim]))
-        self.null_pos_feature = torch.nn.Parameter(
-            torch.zeros([self.fourier_embedder.out_dim * 8]))
         
     def forward(self, bbox, class_label):
         bbox_embed = self.fourier_embedder(bbox).reshape(
-            bbox.shape[0], -1).type_as(self.null_pos_feature)
+            bbox.shape[0], -1).type_as(self.bbox_proj.weight)
         bbox_embed = self.bbox_proj(bbox_embed)
 
         class_embed = self.class_embedder({"class": class_label})
@@ -218,37 +221,6 @@ class BBoxAndClassEmbedder(AbstractEncoder):
     def encode(self, cond):
         return {
             "ref_bbox_token": self(cond["ref_bbox"], cond["ref_label"]),
-        }
-
-class ReferenceEmbedder(AbstractEncoder):
-    def __init__(
-        self,
-        n_bbox_classes=10,
-        class_token_dim=768,
-        embedder_num_freqs=4,
-        proj_dims=[768, 512, 512, 768],
-    ):
-        super().__init__()
-
-        self.image_embedder = FrozenCLIPImageEmbedder()
-        self.bbox_embedder = BBoxAndClassEmbedder(
-            n_bbox_classes=n_bbox_classes,
-            class_token_dim=class_token_dim,
-            embedder_num_freqs=embedder_num_freqs,
-            proj_dims=proj_dims,
-        )
-
-    def forward(self, cond):
-        image_token = self.image_embedder(cond["ref_image"])
-        bbox_token = self.bbox_embedder(cond["ref_bbox"], cond["ref_label"])
-
-        return image_token, bbox_token
-    
-    def encode(self, cond):
-        image_token, bbox_token = self(cond)
-        return {
-            "ref_image_token": image_token,
-            "ref_bbox_token": bbox_token,
         }
 
 class Embedder:

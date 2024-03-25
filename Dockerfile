@@ -18,7 +18,11 @@ RUN apt-get update && apt-get install -y \
     libopenmpi-dev \
     libgtk2.0-dev \
     git \
-    openssh-server
+    openssh-server \
+    tmux \
+    vim
+
+RUN service ssh start
 
 # Install miniconda
 ENV CONDA_DIR /opt/conda
@@ -38,4 +42,3 @@ RUN conda env create -f environment.yaml
 RUN conda init bash
 
 SHELL ["/bin/bash", "--login", "-c"]
-RUN conda activate Paint-by-Example
