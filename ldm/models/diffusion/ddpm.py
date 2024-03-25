@@ -1488,8 +1488,7 @@ class DiffusionWrapper(pl.LightningModule):
             if "multiview" in name:
                 param.requires_grad = True
             else:
-                # TODO: fix gradient checkpointing and set to False
-                param.requires_grad = True
+                param.requires_grad = False
 
         self.conditioning_key = conditioning_key
         assert self.conditioning_key in [None, 'concat', 'crossattn', 'hybrid', 'adm']
