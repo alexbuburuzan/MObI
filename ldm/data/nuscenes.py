@@ -77,6 +77,54 @@ def get_image_coords(bbox_corners, lidar2image):
 
     return coords
 
+def rotate_bbox(bbox_corners, angle=0):
+    """
+    Rotate the 3D bounding box around its y-axis
+
+    Args:
+        bbox_corners: np.array, shape (8, 3)
+        angle: float, rotation angle in degrees
+
+    Returns:
+        np.array, shape (8, 3)
+        Each row is the x, y, z coordinates
+    """
+    if angle == 0:
+        return bbox_corners
+    
+    bbox_corners = copy.deepcopy(bbox_corners)
+    angle = np.deg2rad(angle)
+    center = np.mean(bbox_corners, axis=0)
+    bbox_corners -= center
+
+    rotation_matrix = np.array([
+        [np.cos(angle),-np.sin(angle), 0],
+        [np.sin(angle), np.cos(angle), 0],
+        [0, 0, 1],
+    ])
+    bbox_corners = bbox_corners @ rotation_matrix.T
+
+    bbox_corners += center
+    return bbox_corners
+
+def translate_bbox(bbox_corners, new_center):
+    """
+    Translate the 3D bounding box to a new center
+
+    Args:
+        bbox_corners: np.array, shape (8, 3)
+        new_center: np.array, shape (3,)
+
+    Returns:
+        np.array, shape (8, 3)
+        Each row is the x, y, z coordinates
+    """
+    bbox_corners = copy.deepcopy(bbox_corners)
+    center = np.mean(bbox_corners, axis=0)
+    bbox_corners -= center
+    bbox_corners += new_center
+    return bbox_corners
+
 def get_camera_coords(bbox_corners, lidar2camera):
     """
     Get the camera coordinates of the 3D bounding box
@@ -88,7 +136,6 @@ def get_camera_coords(bbox_corners, lidar2camera):
     Returns:
         np.array, shape (8, 3)
         Each row is the x, y, z coordinates of the 3D bounding box in the camera frame
-        z is the depth
     """
     coords = np.concatenate(
         [bbox_corners.reshape(-1, 3), np.ones((8, 1))], axis=-1
@@ -216,6 +263,8 @@ class NuScenesDataset(data.Dataset):
         frustum_iou_max=0.7,
         camera_visibility_min=0.5,
         normalize_bbox=True,
+        rot_every_angle=0,
+        specific_scene=None, # used for rotation test
     ) -> None:
         self.state = state
         self.ref_aug = ref_aug
@@ -223,6 +272,7 @@ class NuScenesDataset(data.Dataset):
         self.expand_mask_ratio = expand_mask_ratio
         self.expand_ref_ratio = expand_ref_ratio
         self.normalize_bbox = normalize_bbox
+        self.specific_scene = specific_scene
 
         self.all_objects_meta = pd.read_csv(object_database_path, index_col=0)
         # filter out small, occluded objects
@@ -241,6 +291,13 @@ class NuScenesDataset(data.Dataset):
             ).reset_index(drop=True)
         else:
             self.objects_meta = self.all_objects_meta
+
+        if rot_every_angle != 0:
+            angles = np.arange(0, 360, rot_every_angle)
+            self.objects_meta = pd.concat(
+                [self.objects_meta] * len(angles), ignore_index=True
+            )
+            self.objects_meta["bbox_rot_angle"] = np.tile(angles, len(self.objects_meta) // len(angles))
 
         with open(scene_database_path, "rb") as f:
             self.scenes_info = pickle.load(f)
@@ -261,12 +318,17 @@ class NuScenesDataset(data.Dataset):
 
     def __getitem__(self, index):
         object_meta = self.objects_meta.iloc[index]
-        scene_info = self.scenes_info[object_meta["scene_token"]]
-        id_name = self.get_id_name(object_meta)
 
-        obj_idx = object_meta["scene_obj_idx"]
-        cam_idx = object_meta["cam_idx"]
-        bbox_3d_corners = scene_info["gt_bboxes_3d_corners"][obj_idx]
+        if self.specific_scene is not None:
+            scene_info = self.scenes_info[self.specific_scene]
+            # always use the front camera when specific_scene is provided
+            cam_idx = 0
+        else:
+            scene_info = self.scenes_info[object_meta["scene_token"]]
+            cam_idx = object_meta["cam_idx"]
+
+        id_name = self.get_id_name(object_meta)
+        
         lidar2image = scene_info["lidar2image_transforms"][cam_idx]
         lidar2camera = scene_info["lidar2camera_transforms"][cam_idx]
         image_path = scene_info["image_paths"][cam_idx]
@@ -277,23 +339,29 @@ class NuScenesDataset(data.Dataset):
         image_tensor = get_tensor()(np.array(image))
         image_tensor = self.resize(image_tensor)
 
-        # Reference image
-        ref_image = self.get_reference_image(object_meta)
+        # Reference
+        ref_image, ref_bbox_3d, ref_label = self.get_reference(object_meta)
+
         ref_image = self.ref_transform(image=ref_image)["image"]
         ref_image = Image.fromarray(ref_image)
         ref_image_tensor = get_tensor_clip()(ref_image)
 
-        # Reference info
-        ref_label = scene_info["gt_labels"][obj_idx]
-        bbox_image_coords = get_image_coords(bbox_3d_corners, lidar2image)
+        bbox_rot_angle = object_meta.get("bbox_rot_angle", 0)
+        id_name += "_rot-{}".format(bbox_rot_angle)
+        ref_bbox_3d = rotate_bbox(ref_bbox_3d, bbox_rot_angle)
+
+        if self.specific_scene is not None:
+            ref_bbox_3d = translate_bbox(ref_bbox_3d, [0, 9, -1])
+       
+        bbox_image_coords = get_image_coords(ref_bbox_3d, lidar2image)
         if self.normalize_bbox:
             bbox_image_coords[..., 0] /= W
             bbox_image_coords[..., 1] /= H
-        bbox_camera_coords = get_camera_coords(bbox_3d_corners, lidar2camera)
+        bbox_camera_coords = get_camera_coords(ref_bbox_3d, lidar2camera)
 
         # Mask
         mask_np = get_inpaint_mask(
-            bbox_3d_corners, lidar2image, H, W, self.expand_mask_ratio
+            ref_bbox_3d, lidar2image, H, W, self.expand_mask_ratio
         )
         mask_image = Image.fromarray(mask_np)
         mask_tensor = 1 - get_tensor(normalize=False, toTensor=True)(mask_image)
@@ -320,15 +388,14 @@ class NuScenesDataset(data.Dataset):
     def __len__(self):
         return len(self.objects_meta)
     
-    def get_reference_image(self, current_object_meta):
+    def get_reference(self, current_object_meta):
         if self.ref_mode == "no-ref":
             return np.zeros((224, 224, 3), dtype=np.uint8)
         elif self.ref_mode == "same-ref":
             reference_meta = current_object_meta
         elif self.ref_mode == "random-ref":
             reference_meta = self.all_objects_meta[
-                (self.all_objects_meta["reference_image_h"] <= current_object_meta["reference_image_h"]) &
-                (self.all_objects_meta["reference_image_w"] <= current_object_meta["reference_image_w"])
+                self.all_objects_meta["object_class"] == current_object_meta["object_class"]
             ].sample(1).iloc[0]
         elif self.ref_mode == "track-ref":
             reference_meta = self.all_objects_meta[
@@ -340,23 +407,25 @@ class NuScenesDataset(data.Dataset):
         ref_obj_idx = reference_meta["scene_obj_idx"]
         cam_idx = reference_meta["cam_idx"]
         ref_scene_info = self.scenes_info[reference_meta["scene_token"]]
-        bbox_corners = ref_scene_info["gt_bboxes_3d_corners"][ref_obj_idx]
         lidar2image = ref_scene_info["lidar2image_transforms"][cam_idx]
         image_path = ref_scene_info["image_paths"][cam_idx]
+
+        ref_bbox_3d = ref_scene_info["gt_bboxes_3d_corners"][ref_obj_idx]
+        ref_label = ref_scene_info["gt_labels"][ref_obj_idx]
         
         image = Image.open(image_path).convert("RGB")
         W, H = image.size
         image_np = np.array(image)
 
         bbox_2d = get_2d_bbox(
-            bbox_corners, lidar2image, H, W, self.expand_ref_ratio
+            ref_bbox_3d, lidar2image, H, W, self.expand_ref_ratio
         )
         x1, y1, x2, y2 = bbox_2d
         w = np.maximum(x2 - x1 + 1, 1)
         h = np.maximum(y2 - y1 + 1, 1)
         ref_image = image_np[y1:y1+h, x1:x1+w]
 
-        return ref_image
+        return ref_image, ref_bbox_3d, ref_label
     
     def get_id_name(self, object_meta):
         id_name = "sample-{}_track-{}_time-{}_{}_{}".format(

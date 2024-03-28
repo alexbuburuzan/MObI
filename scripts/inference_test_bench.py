@@ -246,6 +246,11 @@ def main():
         choices=["full", "autocast"],
         default="autocast"
     )
+    parser.add_argument(
+        "--rotation_test",
+        action="store_true",
+        help="insert object for rotated bbox",
+    )
     opt = parser.parse_args()
 
     if opt.laion400m:
@@ -291,39 +296,44 @@ def main():
     base_count = len(os.listdir(sample_path))
     grid_count = len(os.listdir(outpath)) - 1
 
-    test_data_config = config.data.params.test
+    if opt.rotation_test:
+        test_data_config = config.data.params.rotation_test
+        test_dataset = instantiate_from_config(test_data_config)
+    else:
+        test_data_config = config.data.params.test
 
-    test_data_config['params']['ref_aug'] = False
-    test_data_config['params']['ref_mode'] = "same-ref"
-    test_dataset = instantiate_from_config(test_data_config)
+        test_data_config['params']['ref_aug'] = False
+        test_data_config['params']['ref_mode'] = "same-ref"
+        test_dataset = instantiate_from_config(test_data_config)
 
-    test_data_config['params']['ref_aug'] = True
-    test_data_config['params']['ref_mode'] = "same-ref"
-    test_dataset_aug = instantiate_from_config(test_data_config)
-    test_dataset_aug.objects_meta = test_dataset.objects_meta
+        test_data_config['params']['ref_aug'] = True
+        test_data_config['params']['ref_mode'] = "same-ref"
+        test_dataset_aug = instantiate_from_config(test_data_config)
+        test_dataset_aug.objects_meta = test_dataset.objects_meta
 
-    test_data_config['params']['ref_aug'] = False
-    test_data_config['params']['ref_mode'] = "track-ref"
-    test_dataset_track = instantiate_from_config(test_data_config)
-    test_dataset_track.objects_meta = test_dataset.objects_meta
+        test_data_config['params']['ref_aug'] = False
+        test_data_config['params']['ref_mode'] = "track-ref"
+        test_dataset_track = instantiate_from_config(test_data_config)
+        test_dataset_track.objects_meta = test_dataset.objects_meta
 
-    test_data_config['params']['ref_aug'] = False
-    test_data_config['params']['ref_mode'] = "random-ref"
-    test_dataset_random = instantiate_from_config(test_data_config)
-    test_dataset_random.objects_meta = test_dataset.objects_meta
+        test_data_config['params']['ref_aug'] = False
+        test_data_config['params']['ref_mode'] = "random-ref"
+        test_dataset_random = instantiate_from_config(test_data_config)
+        test_dataset_random.objects_meta = test_dataset.objects_meta
 
-    test_data_config['params']['ref_aug'] = False
-    test_data_config['params']['ref_mode'] = "no-ref"
-    test_dataset_erase = instantiate_from_config(test_data_config)
-    test_dataset_erase.objects_meta = test_dataset.objects_meta
+        test_data_config['params']['ref_aug'] = False
+        test_data_config['params']['ref_mode'] = "no-ref"
+        test_dataset_erase = instantiate_from_config(test_data_config)
+        test_dataset_erase.objects_meta = test_dataset.objects_meta
 
-    test_dataset = ConcatDataset([
-        test_dataset,
-        test_dataset_aug,
-        test_dataset_track,
-        test_dataset_random,
-        test_dataset_erase,
-    ])
+        test_dataset = ConcatDataset([
+            test_dataset,
+            test_dataset_aug,
+            test_dataset_track,
+            test_dataset_random,
+            test_dataset_erase,
+        ])
+    
 
     test_dataloader= torch.utils.data.DataLoader(
         test_dataset, 

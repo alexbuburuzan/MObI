@@ -165,6 +165,26 @@ data:
                 - bicycle
                 - pedestrian
                 - traffic_cone
+      rotation_test:
+          target: ldm.data.nuscenes.NuScenesDataset
+          params:
+              state: test
+              object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.csv
+              scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
+              expand_mask_ratio: 0.1
+              expand_ref_ratio: 0.1
+              camera_visibility_min: 0.7
+              ref_aug: False
+              ref_mode: same-ref
+              image_height: 512
+              image_width: 512
+              reference_image_min_w: 200
+              reference_image_min_h: 200
+              frustum_iou_max: 0.5
+              rot_every_angle: 30
+              specific_scene: "06be0e3b665c44fa8d17d9f4770bdf9c"
+              object_classes:
+                - car
 
 lightning:
   trainer:
