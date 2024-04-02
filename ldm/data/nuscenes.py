@@ -332,6 +332,7 @@ class NuScenesDataset(data.Dataset):
         lidar2image = scene_info["lidar2image_transforms"][cam_idx]
         lidar2camera = scene_info["lidar2camera_transforms"][cam_idx]
         image_path = scene_info["image_paths"][cam_idx]
+        bbox_3d = scene_info["gt_bboxes_3d_corners"][object_meta["scene_obj_idx"]]
 
         # Image
         image = Image.open(image_path).convert("RGB")
@@ -340,7 +341,7 @@ class NuScenesDataset(data.Dataset):
         image_tensor = self.resize(image_tensor)
 
         # Reference
-        ref_image, ref_bbox_3d, ref_label = self.get_reference(object_meta)
+        ref_image, ref_label = self.get_reference(object_meta)
 
         ref_image = self.ref_transform(image=ref_image)["image"]
         ref_image = Image.fromarray(ref_image)
@@ -348,20 +349,20 @@ class NuScenesDataset(data.Dataset):
 
         bbox_rot_angle = object_meta.get("bbox_rot_angle", 0)
         id_name += "_rot-{}".format(bbox_rot_angle)
-        ref_bbox_3d = rotate_bbox(ref_bbox_3d, bbox_rot_angle)
+        bbox_3d = rotate_bbox(bbox_3d, bbox_rot_angle)
 
         if self.specific_scene is not None:
-            ref_bbox_3d = translate_bbox(ref_bbox_3d, [0, 9, -1])
+            bbox_3d = translate_bbox(bbox_3d, [0, 9, -1])
        
-        bbox_image_coords = get_image_coords(ref_bbox_3d, lidar2image)
+        bbox_image_coords = get_image_coords(bbox_3d, lidar2image)
         if self.normalize_bbox:
             bbox_image_coords[..., 0] /= W
             bbox_image_coords[..., 1] /= H
-        bbox_camera_coords = get_camera_coords(ref_bbox_3d, lidar2camera)
+        bbox_camera_coords = get_camera_coords(bbox_3d, lidar2camera)
 
         # Mask
         mask_np = get_inpaint_mask(
-            ref_bbox_3d, lidar2image, H, W, self.expand_mask_ratio
+            bbox_3d, lidar2image, H, W, self.expand_mask_ratio
         )
         mask_image = Image.fromarray(mask_np)
         mask_tensor = 1 - get_tensor(normalize=False, toTensor=True)(mask_image)
@@ -390,7 +391,7 @@ class NuScenesDataset(data.Dataset):
     
     def get_reference(self, current_object_meta):
         if self.ref_mode == "no-ref":
-            return np.zeros((224, 224, 3), dtype=np.uint8)
+            return np.zeros((224, 224, 3), dtype=np.uint8), 0
         elif self.ref_mode == "same-ref":
             reference_meta = current_object_meta
         elif self.ref_mode == "random-ref":
@@ -425,7 +426,7 @@ class NuScenesDataset(data.Dataset):
         h = np.maximum(y2 - y1 + 1, 1)
         ref_image = image_np[y1:y1+h, x1:x1+w]
 
-        return ref_image, ref_bbox_3d, ref_label
+        return ref_image, ref_label
     
     def get_id_name(self, object_meta):
         id_name = "sample-{}_track-{}_time-{}_{}_{}".format(
