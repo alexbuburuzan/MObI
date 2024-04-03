@@ -28,6 +28,7 @@ import math
 import time
 import random
 from torch.autograd import Variable
+import torch.nn.functional as F
 
 from omegaconf.listconfig import ListConfig
 
@@ -1331,7 +1332,7 @@ class LatentDiffusion(DDPM):
         N = min(x.shape[0], N)
         n_row = min(x.shape[0], n_row)
         log["inputs"] = x
-        log["reconstruction"] = xrec
+        log["vae_reconstruction"] = xrec
         log["mask"]=mask
         log["reference"]=reference
         if self.model.conditioning_key is not None:
@@ -1425,6 +1426,16 @@ class LatentDiffusion(DDPM):
             prog_row = self._get_denoise_row_from_list(progressives, desc="Progressive Generation")
             log["progressive_row"] = prog_row
 
+        if "reference" in log and "mask" in log and "samples" in log and "inputs" in log:
+            new_size = (224, 224)
+            reference = log["reference"]
+            mask = F.interpolate(log["mask"], size=new_size, mode='bilinear').repeat(1, 3, 1, 1)
+            samples = F.interpolate(log["samples"], size=new_size, mode='bilinear')
+            inputs = F.interpolate(log["inputs"], size=new_size, mode='bilinear')
+            
+            log["samples"] = torch.cat([inputs, reference, mask, samples], dim=-2)
+            del log["reference"], log["mask"], log["inputs"]
+
         if return_keys:
             if np.intersect1d(list(log.keys()), return_keys).shape[0] == 0:
                 return log
@@ -1435,10 +1446,12 @@ class LatentDiffusion(DDPM):
     def configure_optimizers(self):
         lr = self.learning_rate
         params = []
+        param_names = []
 
         for name, param in self.model.named_parameters():
             if "multiview" in name:
                 params.append(param)
+                param_names.append(name)
                 assert param.requires_grad, f"{name} requires grad is False"
 
         if self.cond_stage_trainable:
@@ -1447,16 +1460,20 @@ class LatentDiffusion(DDPM):
                 for name, param in self.cond_stage_model.bbox_embedder.named_parameters():
                     if "class_embedder" not in name:
                         params.append(param)
+                        param_names.append(name)
                         assert param.requires_grad, f"{name} requires grad is False"
 
                 params.append(self.bbox_uncond_vector)
+                param_names.append("bbox_uncond_vector")
                 assert self.bbox_uncond_vector.requires_grad, f"bbox_uncond_vector requires grad is False"
             
         if self.learn_logvar:
             print('Diffusion model optimizing logvar')
             params.append(self.logvar)
+            param_names.append("logvar")
             assert self.logvar.requires_grad, f"logvar requires grad is False"
 
+        print(f"Optimizing parameters: {param_names}")
         opt = torch.optim.AdamW(params, lr=lr)
 
         if self.use_scheduler:
