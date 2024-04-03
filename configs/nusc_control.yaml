@@ -10,6 +10,8 @@ model:
     first_stage_key: "inpaint"
     cond_stage_key:
       - "ref_image"
+      - "ref_bbox"
+      - "ref_label"
     image_size: 64
     channels: 4
     cond_stage_trainable: true   # Note: different from the one we trained before
@@ -45,6 +47,7 @@ model:
         use_checkpoint: False
         legacy: False
         add_conv_in_front_of_unet: False
+        bbox_cond: True
 
     first_stage_config:
       target: ldm.models.autoencoder.AutoencoderKL
@@ -74,6 +77,8 @@ model:
       params:
         conditions:
           - "ref_image"
+          - "ref_bbox"
+          - "ref_label"
 
 data:
   target: main.DataModuleFromConfig

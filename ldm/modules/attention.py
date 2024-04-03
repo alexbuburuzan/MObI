@@ -194,36 +194,36 @@ class CrossAttention(nn.Module):
 
 
 class BasicTransformerBlock(nn.Module):
-    def __init__(self, dim, n_heads, d_head, dropout=0., context_dim=None, gated_ff=True, checkpoint=False):
+    def __init__(self, dim, n_heads, d_head, dropout=0., context_dim=None, gated_ff=True, checkpoint=False, bbox_cond=False):
         super().__init__()
+        self.bbox_cond = bbox_cond
+
         self.attn1 = CrossAttention(query_dim=dim, heads=n_heads, dim_head=d_head, dropout=dropout)  # is a self-attention
         self.ff = FeedForward(dim, dropout=dropout, glu=gated_ff)
         self.attn2 = CrossAttention(query_dim=dim, context_dim=context_dim,
                                     heads=n_heads, dim_head=d_head, dropout=dropout)  # is self-attn if context is none
-        self.multiview_attn = zero_module(
-            CrossAttention(query_dim=dim, context_dim=context_dim,
-                           heads=n_heads, dim_head=d_head, dropout=dropout)
-        )
+        if self.bbox_cond:
+            self.multiview_attn = CrossAttention(query_dim=dim, context_dim=context_dim, heads=n_heads, dim_head=d_head, dropout=dropout)
 
         self.norm1 = nn.LayerNorm(dim)
         self.norm2 = nn.LayerNorm(dim)
         self.norm3 = nn.LayerNorm(dim)
-        self.multiview_norm = zero_module(nn.LayerNorm(dim))
+        if self.bbox_cond:
+            self.multiview_norm = nn.LayerNorm(dim)
         self.checkpoint = checkpoint
 
     def forward(self, x, context=None):
         return checkpoint(self._forward, (x, context), self.parameters(), self.checkpoint)
 
     def _forward(self, x, context=None):
-        image_token = context
-        if exists(context) and context.shape[1] > 1:
-            image_token = context[:, [0]]
+        if exists(context) and context.shape[1] > 1 and not self.bbox_cond:
+            context = context[:, [0]]
  
         x = self.attn1(self.norm1(x)) + x
-        x = self.attn2(self.norm2(x), context=image_token) + x
+        x = self.attn2(self.norm2(x), context=context) + x
 
-        # Zero-initialised trainable attention layer
-        x = self.multiview_attn(self.multiview_norm(x), context=context) + x
+        if self.bbox_cond:
+            x = self.multiview_attn(self.multiview_norm(x), context=context) + x
 
         x = self.ff(self.norm3(x)) + x
         return x
@@ -238,7 +238,7 @@ class SpatialTransformer(nn.Module):
     Finally, reshape to image
     """
     def __init__(self, in_channels, n_heads, d_head,
-                 depth=1, dropout=0., context_dim=None):
+                 depth=1, dropout=0., context_dim=None, bbox_cond=False):
         super().__init__()
         self.in_channels = in_channels
         inner_dim = n_heads * d_head
@@ -251,7 +251,7 @@ class SpatialTransformer(nn.Module):
                                  padding=0)
 
         self.transformer_blocks = nn.ModuleList(
-            [BasicTransformerBlock(inner_dim, n_heads, d_head, dropout=dropout, context_dim=context_dim)
+            [BasicTransformerBlock(inner_dim, n_heads, d_head, dropout=dropout, context_dim=context_dim, bbox_cond=bbox_cond)
                 for d in range(depth)]
         )
 

@@ -1,0 +1,72 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        
+        {
+            "name": "Train",
+            "type": "python",
+            "justMyCode": false,
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "args": [
+                "--logdir", "models/Paint-by-Example",
+                "--pretrained_model", "checkpoints/model.ckpt",
+                "--base", "configs/nusc_control.yaml",
+                "--scale_lr", "False"
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Test Bench",
+            "type": "python",
+            "justMyCode": true,
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/inference_test_bench.py",
+            "args": [
+                "--plms",
+                "--outdir", "results_test_bench/baseline_2",
+                "--config", "configs/nusc_control.yaml",
+                "--ckpt", "checkpoints/model.ckpt",
+                "--scale", "5",
+                "--n_samples", "1"
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Inference",
+            "type": "python",
+            "justMyCode": true,
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/inference.py",
+            "args": [
+                "--plms",
+                "--outdir", "results",
+                "--config", "configs/v1.yaml",
+                "--ckpt", "checkpoints/model.ckpt",
+                "--image_path", "examples/image/example_1.png",
+                "--mask_path", "examples/mask/example_1.png",
+                "--reference_path", "examples/reference/example_1.jpg",
+                "--seed", "0",
+                "--scale", "5"
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Rotation Test",
+            "type": "python",
+            "justMyCode": true,
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/inference_test_bench.py",
+            "args": [
+                "--plms",
+                "--outdir", "results_test_rotate/exp",
+                "--config", "configs/nusc_control.yaml",
+                "--ckpt", "checkpoints/model.ckpt",
+                "--scale", "5",
+                "--n_samples", "1",
+                "--rotation_test",
+            ],
+            "console": "integratedTerminal"
+        }
+    ]
+}
