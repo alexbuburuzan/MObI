@@ -24,7 +24,7 @@ model:
     scheduler_config: # 10000 warmup steps
       target: ldm.lr_scheduler.LambdaLinearScheduler
       params:
-        warm_up_steps: [ 10000 ]
+        warm_up_steps: [ 0 ]
         cycle_lengths: [ 10000000000000 ] # incredibly large number to prevent corner cases
         f_start: [ 1.e-6 ]
         f_max: [ 1. ]
@@ -82,14 +82,14 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-      batch_size: 1
+      batch_size: 2
       wrap: False
       train:
           target: ldm.data.nuscenes.NuScenesDataset
           params:
               state: train
-              object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_train.csv
-              scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_train.pkl
+              object_database_path: data/nuscenes/mini_meta/nuscenes_dbinfos_pbe_train.csv
+              scene_database_path: data/nuscenes/mini_meta/nuscenes_scene_infos_pbe_train.pkl
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0.1
               camera_visibility_min: 0.7
@@ -115,8 +115,8 @@ data:
           target: ldm.data.nuscenes.NuScenesDataset
           params:
               state: val
-              object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.csv
-              scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
+              object_database_path: data/nuscenes/mini_meta/nuscenes_dbinfos_pbe_val.csv
+              scene_database_path: data/nuscenes/mini_meta/nuscenes_scene_infos_pbe_val.pkl
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0.1
               camera_visibility_min: 0.7
@@ -142,8 +142,8 @@ data:
           target: ldm.data.nuscenes.NuScenesDataset
           params:
               state: test
-              object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.csv
-              scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
+              object_database_path: data/nuscenes/mini_meta/nuscenes_dbinfos_pbe_val.csv
+              scene_database_path: data/nuscenes/mini_meta/nuscenes_scene_infos_pbe_val.pkl
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0.1
               camera_visibility_min: 0.7

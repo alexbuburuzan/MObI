@@ -529,8 +529,7 @@ class LatentDiffusion(DDPM):
         model = instantiate_from_config(config)
         self.first_stage_model = model.eval()
         self.first_stage_model.train = disabled_train
-        for param in self.first_stage_model.parameters():
-            param.requires_grad = False
+        self.first_stage_model.requires_grad_(False)
 
     def instantiate_cond_stage(self, config):
         if not self.cond_stage_trainable:
@@ -545,18 +544,16 @@ class LatentDiffusion(DDPM):
                 model = instantiate_from_config(config)
                 self.cond_stage_model = model.eval()
                 self.cond_stage_model.train = disabled_train
-                for param in self.cond_stage_model.parameters():
-                    param.requires_grad = False
+                self.cond_stage_model.requires_grad_(False)
         else:
             assert config != '__is_first_stage__'
             assert config != '__is_unconditional__'
             model = instantiate_from_config(config)
             self.cond_stage_model = model
-            for param in self.cond_stage_model.parameters():
-                param.requires_grad = False
+            self.cond_stage_model.requires_grad_(False)
             if hasattr(self.cond_stage_model, "bbox_embedder"):
-                for param in self.cond_stage_model.bbox_embedder.parameters():
-                    param.requires_grad = True
+                self.cond_stage_model.bbox_embedder.requires_grad_(True)
+                self.cond_stage_model.bbox_embedder.class_embedder.requires_grad_(False)
 
 
     def _get_denoise_row_from_list(self, samples, desc='', force_no_decoder_quantization=False):
@@ -1442,16 +1439,23 @@ class LatentDiffusion(DDPM):
         for name, param in self.model.named_parameters():
             if "multiview" in name:
                 params.append(param)
+                assert param.requires_grad, f"{name} requires grad is False"
 
         if self.cond_stage_trainable:
             if "ref_bbox" in self.cond_stage_key:
                 print(f"{self.__class__.__name__}: optimizing bbox conditioning params!")
-                params += list(self.cond_stage_model.bbox_embedder.parameters())
+                for name, param in self.cond_stage_model.bbox_embedder.named_parameters():
+                    if "class_embedder" not in name:
+                        params.append(param)
+                        assert param.requires_grad, f"{name} requires grad is False"
+
                 params.append(self.bbox_uncond_vector)
+                assert self.bbox_uncond_vector.requires_grad, f"bbox_uncond_vector requires grad is False"
             
         if self.learn_logvar:
             print('Diffusion model optimizing logvar')
             params.append(self.logvar)
+            assert self.logvar.requires_grad, f"logvar requires grad is False"
 
         opt = torch.optim.AdamW(params, lr=lr)
 
