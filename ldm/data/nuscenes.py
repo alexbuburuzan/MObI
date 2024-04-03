@@ -341,7 +341,9 @@ class NuScenesDataset(data.Dataset):
         image_tensor = self.resize(image_tensor)
 
         # Reference
-        ref_image, ref_label = self.get_reference(object_meta)
+        ref_image, ref_bbox_3d, ref_label = self.get_reference(object_meta)
+        if self.specific_scene is not None:
+            bbox_3d = ref_bbox_3d
 
         ref_image = self.ref_transform(image=ref_image)["image"]
         ref_image = Image.fromarray(ref_image)
@@ -426,7 +428,7 @@ class NuScenesDataset(data.Dataset):
         h = np.maximum(y2 - y1 + 1, 1)
         ref_image = image_np[y1:y1+h, x1:x1+w]
 
-        return ref_image, ref_label
+        return ref_image, ref_bbox_3d, ref_label
     
     def get_id_name(self, object_meta):
         id_name = "sample-{}_track-{}_time-{}_{}_{}".format(
