@@ -175,6 +175,7 @@ data:
               expand_ref_ratio: 0.1
               camera_visibility_min: 0.7
               ref_aug: False
+              prob_use_3d_edit_mask: 1
               ref_mode: same-ref
               image_height: 512
               image_width: 512

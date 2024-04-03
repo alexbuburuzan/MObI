@@ -146,23 +146,29 @@ def get_camera_coords(bbox_corners, lidar2camera):
 
     return coords[..., :3]
 
-def get_inpaint_mask(bbox_corners, transform, H, W, expand_ratio=0.1):
-    bbox_corners = expand_bbox_corners(bbox_corners, expand_ratio)
-    mask = np.zeros((H, W), dtype=np.uint8)
+def get_inpaint_mask(bbox_corners, transform, H, W, expand_ratio=0.1, use_3d_edit_mask=True):
+    if use_3d_edit_mask:
+        bbox_corners = expand_bbox_corners(bbox_corners, expand_ratio)
+        mask = np.zeros((H, W), dtype=np.uint8)
 
-    coords = get_image_coords(bbox_corners, transform)
+        coords = get_image_coords(bbox_corners, transform)
 
-    # Draw 3D boxes
-    for polygon in [
-        [0, 1, 2, 3],
-        [4, 5, 6, 7],
-        [0, 1, 5, 4],
-        [2, 3, 7, 6],
-        [0, 4, 7, 3],
-        [1, 5, 6, 2],
-    ]:
-        points = coords[polygon].astype(np.int32)
-        cv2.fillPoly(mask, [points], 1, cv2.LINE_AA)
+        # Draw 3D boxes
+        for polygon in [
+            [0, 1, 2, 3],
+            [4, 5, 6, 7],
+            [0, 1, 5, 4],
+            [2, 3, 7, 6],
+            [0, 4, 7, 3],
+            [1, 5, 6, 2],
+        ]:
+            points = coords[polygon].astype(np.int32)
+            cv2.fillPoly(mask, [points], 1, cv2.LINE_AA)
+    else:
+        bbox_2d = get_2d_bbox(bbox_corners, transform, H, W, expand_ratio)
+        mask = np.zeros((H, W), dtype=np.uint8)
+        x1, y1, x2, y2 = bbox_2d
+        mask[y1:y2, x1:x2] = 1
 
     mask = ((mask > 0.5) * 255).astype(np.uint8)
     return mask
@@ -255,6 +261,7 @@ class NuScenesDataset(data.Dataset):
         expand_mask_ratio=0,
         expand_ref_ratio=0,
         ref_aug=True,
+        prob_use_3d_edit_mask=1,
         ref_mode="same-ref", # same-ref, track-ref, random-ref, no-ref
         image_height=512,
         image_width=512,
@@ -273,6 +280,7 @@ class NuScenesDataset(data.Dataset):
         self.expand_ref_ratio = expand_ref_ratio
         self.normalize_bbox = normalize_bbox
         self.specific_scene = specific_scene
+        self.prob_use_3d_edit_mask = prob_use_3d_edit_mask
 
         self.all_objects_meta = pd.read_csv(object_database_path, index_col=0)
         # filter out small, occluded objects
@@ -363,8 +371,9 @@ class NuScenesDataset(data.Dataset):
         bbox_camera_coords = get_camera_coords(bbox_3d, lidar2camera)
 
         # Mask
+        use_3d_edit_mask = (random.random() < self.prob_use_3d_edit_mask)
         mask_np = get_inpaint_mask(
-            bbox_3d, lidar2image, H, W, self.expand_mask_ratio
+            bbox_3d, lidar2image, H, W, self.expand_mask_ratio, use_3d_edit_mask
         )
         mask_image = Image.fromarray(mask_np)
         mask_tensor = 1 - get_tensor(normalize=False, toTensor=True)(mask_image)
