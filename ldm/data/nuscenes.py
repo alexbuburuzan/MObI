@@ -402,7 +402,7 @@ class NuScenesDataset(data.Dataset):
     
     def get_reference(self, current_object_meta):
         if self.ref_mode == "no-ref":
-            return np.zeros((224, 224, 3), dtype=np.uint8), 0
+            return np.zeros((224, 224, 3), dtype=np.uint8), None, 0
         elif self.ref_mode == "same-ref":
             reference_meta = current_object_meta
         elif self.ref_mode == "random-ref":

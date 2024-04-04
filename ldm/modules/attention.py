@@ -210,6 +210,7 @@ class BasicTransformerBlock(nn.Module):
         self.norm3 = nn.LayerNorm(dim)
         if self.bbox_cond:
             self.multiview_norm = nn.LayerNorm(dim)
+            self.multiview_connector = zero_module(nn.Linear(dim, dim))
         self.checkpoint = checkpoint
 
     def forward(self, x, context=None):
@@ -223,7 +224,11 @@ class BasicTransformerBlock(nn.Module):
         x = self.attn2(self.norm2(x), context=context) + x
 
         if self.bbox_cond:
-            x = self.multiview_attn(self.multiview_norm(x), context=context) + x
+            x = self.multiview_connector(
+                self.multiview_attn(
+                    self.multiview_norm(x), context=context
+                )
+            ) + x
 
         x = self.ff(self.norm3(x)) + x
         return x
