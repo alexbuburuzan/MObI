@@ -4,6 +4,7 @@ import time
 import torch
 import torchvision
 import pytorch_lightning as pl
+import multiprocessing
 
 from packaging import version
 from omegaconf import OmegaConf
@@ -142,6 +143,11 @@ def get_parser(**parser_kwargs):
         default=False,
         help="Train from scratch",
     )
+    parser.add_argument(
+        "--save_top_k",
+        type=int,
+        default=1
+    )
     return parser
 
 
@@ -188,7 +194,7 @@ class DataModuleFromConfig(pl.LightningDataModule):
         super().__init__()
         self.batch_size = batch_size
         self.dataset_configs = dict()
-        self.num_workers = num_workers if num_workers is not None else batch_size * 2
+        self.num_workers = num_workers if num_workers is not None else int(9 * multiprocessing.cpu_count() / 10)
         self.use_worker_init_fn = use_worker_init_fn
         if train is not None:
             self.dataset_configs["train"] = train
@@ -566,7 +572,7 @@ if __name__ == "__main__":
     if hasattr(model, "monitor"):
         print(f"Monitoring {model.monitor} as checkpoint metric.")
         default_modelckpt_cfg["params"]["monitor"] = model.monitor
-        default_modelckpt_cfg["params"]["save_top_k"] = 5
+        default_modelckpt_cfg["params"]["save_top_k"] = opt.save_top_k
 
     if "modelcheckpoint" in lightning_config:
         modelckpt_cfg = lightning_config.modelcheckpoint

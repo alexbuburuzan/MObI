@@ -1,5 +1,5 @@
 model:
-  base_learning_rate: 1.0e-05
+  base_learning_rate: 8.0e-05
   target: ldm.models.diffusion.ddpm.LatentDiffusion
   params:
     linear_start: 0.00085
@@ -12,7 +12,7 @@ model:
       - "ref_image"
       - "ref_bbox"
       - "ref_label"
-    image_size: 32
+    image_size: 16
     channels: 4
     cond_stage_trainable: true   # Note: different from the one we trained before
     conditioning_key: crossattn
@@ -24,7 +24,7 @@ model:
     scheduler_config: # 10000 warmup steps
       target: ldm.lr_scheduler.LambdaLinearScheduler
       params:
-        warm_up_steps: [ 0 ]
+        warm_up_steps: [ 50 ]
         cycle_lengths: [ 10000000000000 ] # incredibly large number to prevent corner cases
         f_start: [ 1.e-6 ]
         f_max: [ 1. ]
@@ -33,7 +33,7 @@ model:
     unet_config:
       target: ldm.modules.diffusionmodules.openaimodel.UNetModel
       params:
-        image_size: 32 # unused
+        image_size: 16 # unused
         in_channels: 9
         out_channels: 4
         model_channels: 320
@@ -83,7 +83,7 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-      batch_size: 2
+      batch_size: 48
       wrap: False
       train:
           target: ldm.data.nuscenes.NuScenesDataset
@@ -96,8 +96,8 @@ data:
               camera_visibility_min: 0.7
               ref_aug: True
               ref_mode: same-ref
-              image_height: 256
-              image_width: 256
+              image_height: 128
+              image_width: 128
               reference_image_min_w: 200
               reference_image_min_h: 200
               frustum_iou_max: 0.5
@@ -123,8 +123,8 @@ data:
               camera_visibility_min: 0.7
               ref_aug: True
               ref_mode: same-ref
-              image_height: 256
-              image_width: 256
+              image_height: 128
+              image_width: 128
               reference_image_min_w: 200
               reference_image_min_h: 200
               frustum_iou_max: 0.5
@@ -150,8 +150,8 @@ data:
               camera_visibility_min: 0.7
               ref_aug: False
               ref_mode: same-ref
-              image_height: 256
-              image_width: 256
+              image_height: 128
+              image_width: 128
               reference_image_min_w: 200
               reference_image_min_h: 200
               frustum_iou_max: 0.5
@@ -178,8 +178,8 @@ data:
               ref_aug: False
               prob_use_3d_edit_mask: 1
               ref_mode: same-ref
-              image_height: 256
-              image_width: 256
+              image_height: 128
+              image_width: 128
               reference_image_min_w: 200
               reference_image_min_h: 200
               frustum_iou_max: 0.5
