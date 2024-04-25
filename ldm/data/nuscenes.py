@@ -22,6 +22,153 @@ import torch.utils.data as data
 
 import albumentations as A
 
+class LidarConverter:
+    def __init__(
+        self,
+        H=32,
+        W=1024,
+        fov=(10, -30),
+        depth_range=(1, 51.2),
+        log_scale=True,
+        depth_scale=5.7,
+    ) -> None:
+        self.H = H
+        self.W = W
+        self.fov = fov
+        self.depth_range = depth_range
+        self.fov_up = fov[0] / 180.0 * np.pi
+        self.fov_down = fov[1] / 180.0 * np.pi
+        self.fov_range = abs(self.fov_down) + abs(self.fov_up)
+        self.size = (H, W)
+        self.log_scale = log_scale
+        self.depth_scale = depth_scale
+
+    def pcd2range(self, pcd, labels=None):
+        pcd = pcd.copy()
+        if labels is not None:
+            labels = labels.copy()
+        # get depth (distance) of all points
+        depth = np.linalg.norm(pcd, 2, axis=1)
+
+        # mask points out of range
+        mask = np.logical_and(depth > self.depth_range[0], depth < self.depth_range[1])
+        depth, pcd = depth[mask], pcd[mask]
+
+        # get scan components
+        scan_x, scan_y, scan_z = pcd[:, 0], pcd[:, 1], pcd[:, 2]
+
+        # get angles of all points
+        yaw = -np.arctan2(scan_y, scan_x)
+        pitch = np.arcsin(scan_z / depth)
+
+        # get projections in image coords
+        proj_x = 0.5 * (yaw / np.pi + 1.0)  # in [0.0, 1.0]
+        proj_y = 1.0 - (pitch + abs(self.fov_down)) / self.fov_range  # in [0.0, 1.0]
+
+        # scale to image size using angular resolution
+        proj_x *= self.W # in [0.0, W]
+        proj_y *= self.H  # in [0.0, H]
+
+        # round and clamp for use as index
+        proj_x = np.maximum(0, np.minimum(self.size[1] - 1, np.floor(proj_x))).astype(np.int32)  # in [0,W-1]
+        proj_y = np.maximum(0, np.minimum(self.size[0] - 1, np.floor(proj_y))).astype(np.int32)  # in [0,H-1]
+
+        # order in decreasing depth
+        order = np.argsort(depth)[::-1]
+        proj_x, proj_y = proj_x[order], proj_y[order]
+
+        # project depth
+        depth = depth[order]
+        proj_range = np.full(self.size, -1, dtype=np.float32)
+        proj_range[proj_y, proj_x] = depth
+
+        # project point feature
+        if labels is not None:
+            labels = labels[mask][order]
+            proj_feature = np.full(self.size, 0, dtype=np.float32)
+            proj_feature[proj_y, proj_x] = labels
+        else:
+            proj_feature = None
+
+        proj_range = np.where(proj_range < 0, 0, proj_range)
+        if self.log_scale:
+            proj_range = np.log2(proj_range + 0.0001 + 1)
+
+            proj_range = proj_range / self.depth_scale
+            proj_range = proj_range * 2. - 1.
+
+            proj_range = np.clip(proj_range, -1, 1)
+
+        return proj_range, proj_feature, mask
+
+    def range2pcd(self, depth, label=None):
+        depth = depth.copy()
+        if label is not None:
+            label = label.copy()
+
+        if self.log_scale:
+            depth = (depth + 1) / 2
+            depth = (depth * self.depth_scale)
+            depth = np.exp2(depth) - 1
+
+        depth = depth.flatten()
+
+        scan_x, scan_y = np.meshgrid(np.arange(self.size[1]), np.arange(self.size[0]))
+        scan_x = scan_x.astype(np.float32) / self.size[1]
+        scan_y = scan_y.astype(np.float32) / self.size[0]
+
+        yaw = (np.pi * (scan_x * 2 - 1)).flatten()
+        pitch = ((1.0 - scan_y) * self.fov_range - abs(self.fov_down)).flatten()
+
+        pcd = np.zeros((len(yaw), 3)).astype(np.float32)
+        pcd[:, 0] = np.cos(yaw) * np.cos(pitch) * depth
+        pcd[:, 1] = -np.sin(yaw) * np.cos(pitch) * depth
+        pcd[:, 2] = np.sin(pitch) * depth
+
+        # mask out invalid points
+        mask = np.logical_and(depth > self.depth_range[0], depth < self.depth_range[1])
+        pcd = pcd[mask, :]
+
+        # label
+        if label is not None:
+            label = label.flatten()[mask]
+
+        return pcd, label
+    
+    def resize(self, range_img, feature=None, new_W=1034, new_H=32):
+        range_img = cv2.resize(range_img, (new_W, new_H), interpolation=cv2.INTER_NEAREST)
+        if feature is not None:
+            feature = cv2.resize(feature, (new_W, new_H), interpolation=cv2.INTER_NEAREST)
+        return range_img, feature
+
+    def get_range_coords(self, bbox_corners):
+        bbox_corners = bbox_corners.copy()
+
+        # get depth (distance) of all points
+        depth = np.linalg.norm(bbox_corners, 2, axis=1)
+
+        # get scan components
+        scan_x, scan_y, scan_z = bbox_corners[:, 0], bbox_corners[:, 1], bbox_corners[:, 2]
+
+        # get angles of all points
+        yaw = -np.arctan2(scan_y, scan_x)
+        pitch = np.arcsin(scan_z / depth)
+
+        # get projections in image coords
+        proj_x = 0.5 * (yaw / np.pi + 1.0)  # in [0.0, 1.0]
+        proj_y = 1.0 - (pitch + abs(self.fov_down)) / self.fov_range  # in [0.0, 1.0]
+
+        # scale to image size using angular resolution
+        proj_x *= self.W # in [0.0, W]
+        proj_y *= self.H  # in [0.0, H]
+
+        coords = np.concatenate(
+            [proj_x[:, None], proj_y[:, None]],
+            axis=-1
+        ).astype(np.int32)
+
+        return coords
+
 
 def bbox_process(bbox):
     x_min = int(bbox[0])
@@ -109,80 +256,6 @@ def rotate_bbox(bbox_corners, angle=0):
     return bbox_corners
 
 
-def points2range(
-    pcd, 
-    H=32,
-    fov=(10, -32),
-    depth_range=(1, 45),
-    remission=None,
-    labels=None,
-    **kwargs
-) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    # laser parameters
-    fov_up = fov[0] / 180.0 * np.pi  # field of view up in rad
-    fov_down = fov[1] / 180.0 * np.pi  # field of view down in rad
-    fov_range = abs(fov_down) + abs(fov_up)  # get field of view total in rad
-
-    W = int(2 * math.pi * H / fov_range)
-    size = (H, W)
-
-    # get depth (distance) of all points
-    depth = np.linalg.norm(pcd, 2, axis=1)
-
-    # mask points out of range
-    mask = np.logical_and(depth > depth_range[0], depth < depth_range[1])
-    depth, pcd = depth[mask], pcd[mask]
-
-    # get scan components
-    scan_x, scan_y, scan_z = pcd[:, 0], pcd[:, 1], pcd[:, 2]
-
-    # get angles of all points
-    yaw = -np.arctan2(scan_y, scan_x)
-    pitch = np.arcsin(scan_z / depth)
-
-    # get projections in image coords
-    proj_x = 0.5 * (yaw / np.pi + 1.0)  # in [0.0, 1.0]
-    proj_y = 1.0 - (pitch + abs(fov_down)) / fov_range  # in [0.0, 1.0]
-
-    # scale to image size using angular resolution
-    proj_x *= W # in [0.0, W]
-    proj_y *= H  # in [0.0, H]
-
-    # round and clamp for use as index
-    proj_x = np.maximum(0, np.minimum(size[1] - 1, np.floor(proj_x))).astype(np.int32)  # in [0,W-1]
-    proj_y = np.maximum(0, np.minimum(size[0] - 1, np.floor(proj_y))).astype(np.int32)  # in [0,H-1]
-
-    # order in decreasing depth
-    order = np.argsort(depth)[::-1]
-    proj_x, proj_y = proj_x[order], proj_y[order]
-
-    # project depth
-    depth = depth[order]
-    proj_range = np.full(size, 0, dtype=np.float32)
-    proj_range[proj_y, proj_x] = depth
-
-    # project point feature
-    if remission is not None:
-        remission = remission[mask][order]
-        proj_feature = np.full(size, -1, dtype=np.float32)
-        proj_feature[proj_y, proj_x] = remission
-    elif labels is not None:
-        labels = labels[mask][order]
-        proj_feature = np.full(size, 0, dtype=np.float32)
-        proj_feature[proj_y, proj_x] = labels
-    else:
-        proj_feature = None
-
-    #normalize
-    proj_range /= depth_range[1]
-    proj_range = (proj_range * 255).astype(np.uint8) # TODO: leave float
-
-    if proj_feature is not None:
-        proj_feature /= proj_feature.max()
-
-    return proj_range, proj_feature
-
-
 def translate_bbox(bbox_corners, new_center):
     """
     Translate the 3D bounding box to a new center
@@ -201,56 +274,6 @@ def translate_bbox(bbox_corners, new_center):
     bbox_corners += new_center
     return bbox_corners
 
-
-def get_range_image_coords(bbox_corners, H=32, fov=(10, -32)):
-    """
-    Get the range image coordinates of the 3D bounding box
-
-    Args:
-        bbox_corners: np.array, shape (8, 3)
-        H: int, height of the range image
-        W: int, width of the range image
-        fov: tuple, field of view in degrees
-        depth_range: tuple, min and max depth
-
-    Returns:
-        np.array, shape (8, 2)
-        Each row is the x, y coordinates of the 3D bounding box in the range image
-        x \in [0, W], y \in [0, H]
-    """
-    # laser parameters
-    fov_up = fov[0] / 180.0 * np.pi  # field of view up in rad
-    fov_down = fov[1] / 180.0 * np.pi  # field of view down in rad
-    fov_range = abs(fov_down) + abs(fov_up)  # get field of view total in rad
-
-    W = int(2 * math.pi * H / fov_range)
-
-    bbox_corners = bbox_corners.copy()
-
-    # get depth (distance) of all points
-    depth = np.linalg.norm(bbox_corners, 2, axis=1)
-
-    # get scan components
-    scan_x, scan_y, scan_z = bbox_corners[:, 0], bbox_corners[:, 1], bbox_corners[:, 2]
-
-    # get angles of all points
-    yaw = -np.arctan2(scan_y, scan_x)
-    pitch = np.arcsin(scan_z / depth)
-
-    # get projections in image coords
-    proj_x = 0.5 * (yaw / np.pi + 1.0)  # in [0.0, 1.0]
-    proj_y = 1.0 - (pitch + abs(fov_down)) / fov_range  # in [0.0, 1.0]
-
-    # scale to image size using angular resolution
-    proj_x *= W # in [0.0, W]
-    proj_y *= H  # in [0.0, H]
-
-    coords = np.concatenate(
-        [proj_x[:, None], proj_y[:, None]],
-        axis=-1
-    ).astype(np.int32)
-
-    return coords
 
 def get_camera_coords(bbox_corners, lidar2camera):
     """
@@ -411,6 +434,8 @@ class NuScenesDataset(data.Dataset):
         self.specific_scene = specific_scene
         self.prob_use_3d_edit_mask = prob_use_3d_edit_mask
         self.use_lidar = use_lidar
+        self.image_height = image_height
+        self.image_width = image_width
 
         self.all_objects_meta = pd.read_csv(object_database_path, index_col=0)
         # filter out small, occluded objects
@@ -591,35 +616,39 @@ class NuScenesDataset(data.Dataset):
         return id_name
     
     def get_rasterized_lidar(self, scene_info, bbox_3d):
-        if "rasterized_lidar_path" in scene_info:
-            raster = np.load(scene_info["rasterized_lidar_path"])
-            range_image, range_int = raster[0], raster[1]
-        else:
+        lidar_converter = LidarConverter()
+
+        if "range_depth_path" in scene_info and "range_intensities_path" in scene_info:
+            range_depth = np.load(scene_info["range_depth_path"])
+            range_int = np.load(scene_info["range_intensity_path"])
+        elif "lidar_path" in scene_info:
             lidar_scan = np.load(scene_info["lidar_path"])
             points = lidar_scan[:, :3].astype(np.float32)
-            range_image, range_int = points2range(points, labels=lidar_scan[:, 3])
+            range_depth, range_int = lidar_converter.points2range(points, labels=lidar_scan[:, 3])
+        else:
+            raise ValueError("No lidar data found")
 
-        bbox_range_coords = get_range_image_coords(bbox_3d)
-        bbox_range_coords[:, 0] += range_image.shape[1]
-        range_image_ext = np.tile(range_image, 3)
+        bbox_range_coords = lidar_converter.get_range_coords(bbox_3d)
+        bbox_range_coords[:, 0] += range_depth.shape[1]
+        range_depth_ext = np.tile(range_depth, 3)
         range_int_ext = np.tile(range_int, 3)
 
         center_x = int(np.mean(bbox_range_coords[:, 0]))
 
-        left = int(random.random() * 30) + 13
-        right = 56 - left
-        range_image_crop = range_image_ext[:, center_x-left:center_x+right]
-        range_int_crop = range_int_ext[:, center_x-left:center_x+right]
-        bbox_range_coords = bbox_range_coords - np.array([center_x - left, 0])
+        d_left = random.randint(self.image_width // 4, self.image_width - self.image_width // 4)
+        d_right = self.image_width - d_left
+        range_depth_crop = range_depth_ext[:, center_x - d_left: center_x + d_right]
+        range_int_crop = range_int_ext[:, center_x - d_left: center_x + d_right]
+        bbox_range_coords = bbox_range_coords - np.array([center_x - d_left, 0])
 
         bbox_range_coords = bbox_range_coords.astype(np.float32)
-        bbox_range_coords[..., 0] /= range_image_crop.shape[1]
-        bbox_range_coords[..., 1] /= range_image_crop.shape[0]
+        bbox_range_coords[..., 0] /= range_depth_crop.shape[1]
+        bbox_range_coords[..., 1] /= range_depth_crop.shape[0]
 
-        range_image_crop = np.tile(range_image_crop[:, :, None], 3)
-        range_image_crop = get_tensor(normalize=False, toTensor=True)(range_image_crop)
-        range_image_crop = self.resize(range_image_crop)
+        range_depth_crop = np.tile(range_depth_crop[:, :, None], 3)
+        range_depth_crop = get_tensor(normalize=False, toTensor=True)(range_depth_crop)
+        range_depth_crop = self.resize(range_depth_crop)
 
-        return range_image_crop, range_int_crop, bbox_range_coords
+        return range_depth_crop, range_int_crop, bbox_range_coords
         
         
