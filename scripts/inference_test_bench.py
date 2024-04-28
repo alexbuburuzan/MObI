@@ -18,7 +18,7 @@ import torchvision
 from ldm.util import instantiate_from_config
 from ldm.models.diffusion.ddim import DDIMSampler
 from ldm.models.diffusion.plms import PLMSSampler
-from ldm.data.nuscenes import draw_projected_bbox
+from ldm.data.utils import draw_projected_bbox
 
 from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
 from transformers import AutoFeatureExtractor

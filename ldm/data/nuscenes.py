@@ -169,7 +169,7 @@ class NuScenesDataset(data.Dataset):
             bbox_image_coords[..., 1] /= H
             bbox_cond_coords = get_camera_coords(bbox_3d, lidar2camera)
         if self.use_lidar:
-            bbox_image_coords = bbox_range_coords
+            bbox_image_coords = bbox_range_coords[:, :2]
             bbox_cond_coords = bbox_range_coords
 
         # Mask
