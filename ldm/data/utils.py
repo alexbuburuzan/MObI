@@ -220,60 +220,81 @@ def expand_bbox_corners(bbox_corners, expand_ratio=0.1):
     return bbox_corners
 
 def visualize_lidar(
-    lidar = None,
+    lidar=None,
     *,
-    fpath: str = "lidar.png",
-    bboxes = None,
-    xlim = (-50, 50),
-    ylim = (-50, 50),
-    radius: float = 15,
-    thickness: float = 20,
+    fpath=None,
+    bboxes=None,
+    xlim=(-10, 10),
+    ylim=(-10, 10),
+    thickness: int = 1,
     color=(0, 165, 255),
-    dpi: int = 10,
+    dpi: int = 40,  # Set to desired resolution
 ) -> np.ndarray:
-    bboxes = copy.deepcopy(bboxes)
-    fig = plt.figure(figsize=(xlim[1] - xlim[0], ylim[1] - ylim[0]))
+    bbox = copy.deepcopy(bboxes)
+    lidar = lidar.copy() if lidar is not None else None
 
-    ax = plt.gca()
-    ax.set_xlim(*xlim)
-    ax.set_ylim(*ylim)
-    ax.set_aspect(1)
-    ax.set_axis_off()
-
-    fig.subplots_adjust(bottom=0)
-    fig.subplots_adjust(top=1)
-    fig.subplots_adjust(right=1)
-    fig.subplots_adjust(left=0)
-
-    if lidar is not None:
-        plt.scatter(
-            lidar[:, 0],
-            lidar[:, 1],
-            s=radius,
-            c="teal",
-        )
+    # Create a blank image
+    img = np.ones((int((ylim[1]-ylim[0])*dpi), int((xlim[1]-xlim[0])*dpi), 3), dtype=np.uint8) * 255
 
     if bboxes is not None and len(bboxes) > 0:
         if bboxes.ndim == 2:
-            bboxes = bboxes[None]
-        coords = bboxes[:, [0, 3, 7, 4, 0], :2]
-        for index in range(coords.shape[0]):
-            plt.plot(
-                coords[index, :, 0],
-                coords[index, :, 1],
-                linewidth=thickness,
-                color=np.array(color) / 255,
+            bboxes = bboxes[None, ...]
+        for bbox in bboxes:
+            for start, end in [
+                (0, 1), (0, 3), (3, 2), (1, 2),  # bottom lines
+                (1, 5), (0, 4), (3, 7), (2, 6),  # vertical lines
+                (4, 7), (4, 5), (5, 6), (6, 7),  # top lines
+            ]:
+                pt1 = (int(bbox[start, 0]*dpi-xlim[0]*dpi), int((ylim[1]-bbox[start, 1])*dpi))
+                pt2 = (int(bbox[end, 0]*dpi-xlim[0]*dpi), int((ylim[1]-bbox[end, 1])*dpi))
+                cv2.line(img, pt1, pt2, color, thickness)
+
+            # draw an arrow for the orientation
+            center = np.mean(bbox, axis=0)
+            tip = np.mean(bbox[[0, 1, 4, 5]], axis=0)
+            pt_center = (int(center[0]*dpi-xlim[0]*dpi), int((ylim[1]-center[1])*dpi))
+            pt_tip = (int(tip[0]*dpi-xlim[0]*dpi), int((ylim[1]-tip[1])*dpi))
+            cv2.arrowedLine(
+                img,
+                pt_center,
+                pt_tip,
+                color,
+                thickness,
+                cv2.LINE_AA,
+                tipLength=0.1,
             )
 
-    fig.savefig(
-        fpath,
-        facecolor="white",
-        format="png",
-        dpi=dpi,
-    )
+    if lidar is not None:
+        lidar[:, 0] = (lidar[:, 0] - xlim[0]) * dpi
+        lidar[:, 1] = (ylim[1] - lidar[:, 1]) * dpi
+        mask = (lidar[:, 0] >= 0) & (lidar[:, 0] < img.shape[1]) & (lidar[:, 1] >= 0) & (lidar[:, 1] < img.shape[0])
+        lidar = lidar[mask].astype(int)
 
-    image = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-    plt.close()
+        img[lidar[:, 1], lidar[:, 0]] = (0, 128, 128)    
 
-    canvas_shape = fig.canvas.get_width_height()[::-1]
-    return image.reshape(canvas_shape[0] // dpi, canvas_shape[1] // dpi, 3)
+    if fpath is not None:
+        cv2.imwrite(fpath, img[..., ::-1])    
+
+    return img
+
+
+def focus_on_bbox(points, bbox_3d):
+    points = points.copy()
+    bbox_3d = bbox_3d.copy()
+
+    bbox_center = np.mean(bbox_3d, axis=0)
+
+    sign = 1 if bbox_center[0] > 0 else -1
+    theta_z = sign * np.pi / 4
+    rot_z = np.array([[np.cos(theta_z), -np.sin(theta_z), 0], [np.sin(theta_z), np.cos(theta_z), 0], [0, 0, 1]])
+    theta_x = -np.pi / 3
+    rot_x = np.array([[1, 0, 0], [0, np.cos(theta_x), -np.sin(theta_x)], [0, np.sin(theta_x), np.cos(theta_x)]])
+    rot_mat = np.dot(rot_x, rot_z)
+
+    points = points - bbox_center
+    points = np.dot(points, rot_mat.T)
+
+    bbox_3d = bbox_3d - bbox_center
+    bbox_3d = np.dot(bbox_3d, rot_mat.T)
+
+    return points, bbox_3d
