@@ -190,9 +190,6 @@ class NuScenesDataset(data.Dataset):
             "inpaint_image": inpaint_tensor,
             "inpaint_mask": mask_tensor,
             "bbox_image_coords": bbox_image_coords,
-            "orig_range_depth": range_depth,
-            "orig_range_int": range_int,
-            "crop_left": crop_left,
             "bbox_3d": bbox_3d,
             "cond": {
                 "ref_image": ref_image_tensor,
@@ -200,6 +197,11 @@ class NuScenesDataset(data.Dataset):
                 "ref_label": ref_label,
             }
         }
+
+        if self.state == "test":
+            data["range_depth"] = range_depth
+            data["range_int"] = range_int
+            data["crop_left"] = crop_left
 
         return data
     

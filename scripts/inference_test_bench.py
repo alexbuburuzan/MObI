@@ -1,32 +1,29 @@
-import argparse, os, sys, glob
+import argparse, os
 import cv2
 import torch
 import numpy as np
 from omegaconf import OmegaConf
 from PIL import Image
-from tqdm import tqdm, trange
+from tqdm import tqdm
 # from imwatermark import WatermarkEncoder
 from itertools import islice
-from einops import rearrange
-from torchvision.utils import make_grid
-import time
 from pytorch_lightning import seed_everything
 from torch import autocast
-from contextlib import contextmanager, nullcontext
-import torchvision
+from contextlib import nullcontext
 
 from ldm.util import instantiate_from_config
 from ldm.models.diffusion.ddim import DDIMSampler
 from ldm.models.diffusion.plms import PLMSSampler
-from ldm.data.utils import draw_projected_bbox
+from ldm.data.utils import draw_projected_bbox, visualize_lidar, focus_on_bbox
+from ldm.data.lidar_converter import LidarConverter
 
 from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
 from transformers import AutoFeatureExtractor
 
-from ldm.data.test_bench_dataset import COCOImageDataset
-import clip
+import torchvision
 from torchvision.transforms import Resize
 from torch.utils.data import ConcatDataset
+
 # load safety model
 safety_model_id = "CompVis/stable-diffusion-safety-checker"
 safety_feature_extractor = AutoFeatureExtractor.from_pretrained(safety_model_id)
@@ -288,6 +285,7 @@ def main():
             data = list(chunk(data, batch_size))
 
     sample_path = os.path.join(outpath, "samples")
+    lidar_path = os.path.join(outpath, "lidar")
     result_path = os.path.join(outpath, "results")
     grid_path=os.path.join(outpath, "grid")
     os.makedirs(sample_path, exist_ok=True)
@@ -321,17 +319,17 @@ def main():
         test_dataset_random = instantiate_from_config(test_data_config)
         test_dataset_random.objects_meta = test_dataset.objects_meta
 
-        test_data_config['params']['ref_aug'] = False
-        test_data_config['params']['ref_mode'] = "no-ref"
-        test_dataset_erase = instantiate_from_config(test_data_config)
-        test_dataset_erase.objects_meta = test_dataset.objects_meta
+        # test_data_config['params']['ref_aug'] = False
+        # test_data_config['params']['ref_mode'] = "no-ref"
+        # test_dataset_erase = instantiate_from_config(test_data_config)
+        # test_dataset_erase.objects_meta = test_dataset.objects_meta
 
         test_dataset = ConcatDataset([
             test_dataset,
             test_dataset_aug,
             test_dataset_track,
             test_dataset_random,
-            test_dataset_erase,
+            # test_dataset_erase,
         ])
     
 
@@ -345,7 +343,7 @@ def main():
         drop_last=True
     )
     
-    resize = Resize([450, 800])
+    resize = Resize([256, 256])
 
     start_code = None
     if opt.fixed_code:
@@ -357,6 +355,11 @@ def main():
             with model.ema_scope():
                 all_samples = list()
                 for batch in tqdm(test_dataloader):
+                    if opt.rotation_test:
+                        # diffusion models are highly sensitive to the initial noise
+                        # this should help with consistency
+                        seed_everything(opt.seed)
+
                     segment_id_batch = batch["id_name"]
                     image_tensor = batch["GT"]
                     test_model_kwargs = {k: v for k, v in batch.items() if k in ["inpaint_image", "inpaint_mask"]}
@@ -412,6 +415,7 @@ def main():
                     if not opt.skip_save:
                         for i,x_sample in enumerate(x_checked_image_torch):
                             ref_bbox = batch['bbox_image_coords'][i].cpu().numpy()
+                            bbox_3d = batch['bbox_3d'][i].cpu().numpy()
 
                             GT_img = un_norm(image_tensor[i]).cpu().numpy().transpose(1, 2, 0)
                             GT_img = (GT_img * 255).astype(np.uint8)[..., ::-1]
@@ -431,16 +435,47 @@ def main():
 
                             mask = inpaint_mask[i].cpu().numpy().transpose(1, 2, 0)
 
+                            if test_data_config['params']['use_lidar']:
+                                range_depth = batch["range_depth"][i].cpu().numpy()
+                                range_int = batch["range_int"][i].cpu().numpy()
+                                crop_left = batch["crop_left"][i].item()
+
+                                lidar_converter = LidarConverter()
+                                range_depth_new, _ = lidar_converter.undo_default_transforms(
+                                    crop_left,
+                                    range_depth=range_depth,
+                                    range_depth_crop=np.mean(x_sample.cpu().numpy(), axis=0) * 2 - 1,
+                                    image_height=x_sample.shape[-2],
+                                    image_width=x_sample.shape[-1],
+                                    mask=~mask[..., 0].astype(bool),
+                                )
+
+                                points_new, _ = lidar_converter.range2pcd(range_depth_new)
+                                points, _ = lidar_converter.range2pcd(range_depth)
+
+                                points, _ = focus_on_bbox(points, bbox_3d)
+                                points_new, bbox_3d = focus_on_bbox(points_new, bbox_3d)
+
+                                lidar_vis_new = visualize_lidar(points_new, bboxes=bbox_3d)
+                                lidar_vis = visualize_lidar(points, bboxes=bbox_3d)
+
+                                cv2.imwrite(os.path.join(lidar_path, segment_id_batch[i] + "_lidar.png"), lidar_vis[:, :, ::-1])
+                                cv2.imwrite(os.path.join(lidar_path, segment_id_batch[i] + "_lidar_new.png"), lidar_vis_new[:, :, ::-1])
+
                             all_img=[GT_img, inpaint_img, ref_image, pred_img]
-                            
-                            grid = np.concatenate(all_img, axis=1)
+                            img_grid = np.concatenate(all_img, axis=1)
+
+                            if test_data_config['params']['use_lidar']:
+                                all_lidar = [lidar_vis, lidar_vis_new]
+                                lidar_grid = np.concatenate(all_lidar, axis=1)
+                                cv2.imwrite(os.path.join(grid_path, 'grid-' + segment_id_batch[i] + '_lidar.png'), lidar_grid[..., ::-1])
 
                             cv2.imwrite(os.path.join(sample_path, segment_id_batch[i] + "_GT.png"), GT_img)
                             cv2.imwrite(os.path.join(sample_path, segment_id_batch[i] + "_inpaint.png"), inpaint_img)
                             cv2.imwrite(os.path.join(sample_path, segment_id_batch[i] + "_ref.png"), ref_image)
                             cv2.imwrite(os.path.join(result_path, segment_id_batch[i] + ".png"), pred_img)
                             cv2.imwrite(os.path.join(sample_path, segment_id_batch[i] + "_mask.png"), mask)
-                            cv2.imwrite(os.path.join(grid_path, 'grid-' + segment_id_batch[i] + '.png'), grid)
+                            cv2.imwrite(os.path.join(grid_path, 'grid-' + segment_id_batch[i] + '_img.png'), img_grid)
                             base_count += 1
 
                     if not opt.skip_grid:

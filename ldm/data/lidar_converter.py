@@ -134,7 +134,6 @@ class LidarConverter:
         pitch = ((1.0 - scan_y) * self.fov_range - abs(self.fov_down)).flatten()
 
         pcd = np.zeros((len(yaw), 3)).astype(np.float32)
-        print(yaw.shape, pitch.shape, depth.shape, pcd.shape)
         pcd[:, 0] = np.cos(yaw) * np.cos(pitch) * depth
         pcd[:, 1] = -np.sin(yaw) * np.cos(pitch) * depth
         pcd[:, 2] = np.sin(pitch) * depth
@@ -457,12 +456,19 @@ class LidarConverter:
         range_int=None,
         image_height=512,
         image_width=512,
+        mask=None,
     ):
         assert range_depth is None or range_depth_crop is not None, "If range_depth is not None, range_depth_crop must be provided"
         assert range_int is None or range_int_crop is not None, "If range_int is not None, range_int_crop must be provided"
 
         range_depth, range_int, _ = self._copy_tensors(range_depth, range_int)
         range_depth_crop, range_int_crop, _ = self._copy_tensors(range_depth_crop, range_int_crop)
+
+        ignore = -1000
+
+        if mask is not None:
+            if range_depth_crop is not None: range_depth_crop[~mask] = ignore
+            if range_int_crop is not None: range_int_crop[~mask] = ignore
 
         range_depth_crop, range_int_crop, _ = self.undo_vertical_pad(
             range_depth_crop, range_int_crop, pad=image_height // 2
@@ -472,13 +478,30 @@ class LidarConverter:
             range_depth_crop, range_int_crop, new_W=image_width, new_H=range_depth.shape[0]
         )
 
+        crop_left = crop_left % range_depth.shape[1]
         if range_depth is not None:
+            if mask is not None:
+                range_depth_aux = np.zeros_like(range_depth) + ignore
+            else:
+                range_depth_aux = range_depth.copy()
+
             right = min(crop_left + range_depth_crop.shape[1], range_depth.shape[1])
-            range_depth[:, crop_left : crop_left + right] = range_depth_crop[:, : right - crop_left]
-            range_depth[:, :image_width - (right - crop_left)] = range_depth_crop[:, right - crop_left :]
+            range_depth_aux[:, crop_left : right] = range_depth_crop[:, : right - crop_left]
+            range_depth_aux[:, :image_width - (right - crop_left)] = range_depth_crop[:, right - crop_left :]
+
+            if mask is not None:
+                range_depth = np.where(range_depth_aux == ignore, range_depth, range_depth_aux)
         if range_int is not None:
+            if mask is not None:
+                range_int_aux = np.zeros_like(range_int) + ignore
+            else:
+                range_int_aux = range_int.copy()
+
             right = min(crop_left + range_int_crop.shape[1], range_int.shape[1])
-            range_int[:, crop_left : crop_left + right] = range_int_crop[:, : right - crop_left]
-            range_int[:, :image_width - (right - crop_left)] = range_int_crop[:, right - crop_left :]
+            range_int_aux[:, crop_left : right] = range_int_crop[:, : right - crop_left]
+            range_int_aux[:, :image_width - (right - crop_left)] = range_int_crop[:, right - crop_left :]
+
+            if mask is not None:
+                range_int = np.where(range_int_aux == ignore, range_int, range_int_aux)
 
         return range_depth, range_int
