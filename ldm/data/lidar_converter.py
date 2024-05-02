@@ -10,7 +10,7 @@ class LidarConverter:
         W = 1024,
         fov = (10, -30),
         depth_range = (1, 51.2),
-        log_scale = True,
+        log_scale = False,
         depth_scale = 5.7,
     ) -> None:
         self.H = H
@@ -94,8 +94,11 @@ class LidarConverter:
         if self.log_scale:
             range_depth = np.log2(range_depth + 0.0001 + 1)
             range_depth = range_depth / self.depth_scale
-            range_depth = range_depth * 2.0 - 1.0
-            range_depth = np.clip(range_depth, -1, 1)
+        else:
+            range_depth = range_depth / self.depth_range[1]
+
+        range_depth = range_depth * 2.0 - 1.0
+        range_depth = np.clip(range_depth, -1, 1)
 
         return range_depth, range_int, mask
 
@@ -118,11 +121,13 @@ class LidarConverter:
 
         # derasterize with default dimensions
         range_depth, range_int, _ = self.resize(range_depth, range_int, new_H=self.base_size[0], new_W=self.base_size[1])
+        range_depth = (range_depth + 1) / 2
 
         if self.log_scale:
-            range_depth = (range_depth + 1) / 2
             range_depth = range_depth * self.depth_scale
             range_depth = np.exp2(range_depth) - 1
+        else:
+            range_depth = range_depth * self.depth_range[1]
 
         depth = range_depth.flatten()
 
@@ -192,8 +197,11 @@ class LidarConverter:
         if self.log_scale:
             depth = np.log2(depth + 0.0001 + 1)
             depth = depth / self.depth_scale
-            depth = depth * 2.0 - 1.0
-            depth = np.clip(depth, -1, 1)
+        else:
+            depth = depth / self.depth_range[1]
+
+        depth = depth * 2.0 - 1.0
+        depth = np.clip(depth, -1, 1)
 
         coords = np.concatenate(
             [proj_x[:, None], proj_y[:, None], depth[:, None]], axis=-1
@@ -489,8 +497,7 @@ class LidarConverter:
             range_depth_aux[:, crop_left : right] = range_depth_crop[:, : right - crop_left]
             range_depth_aux[:, :image_width - (right - crop_left)] = range_depth_crop[:, right - crop_left :]
 
-            if mask is not None:
-                range_depth = np.where(range_depth_aux == ignore, range_depth, range_depth_aux)
+            range_depth = np.where(range_depth_aux == ignore, range_depth, range_depth_aux)
         if range_int is not None:
             if mask is not None:
                 range_int_aux = np.zeros_like(range_int) + ignore
@@ -501,7 +508,6 @@ class LidarConverter:
             range_int_aux[:, crop_left : right] = range_int_crop[:, : right - crop_left]
             range_int_aux[:, :image_width - (right - crop_left)] = range_int_crop[:, right - crop_left :]
 
-            if mask is not None:
-                range_int = np.where(range_int_aux == ignore, range_int, range_int_aux)
+            range_int = np.where(range_int_aux == ignore, range_int, range_int_aux)
 
         return range_depth, range_int
