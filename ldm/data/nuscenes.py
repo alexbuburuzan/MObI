@@ -149,7 +149,7 @@ class NuScenesDataset(data.Dataset):
             W, H = image_tensor.shape[2], image_tensor.shape[1]
 
         # Reference
-        ref_image, ref_bbox_3d, ref_label = self.get_reference(object_meta)
+        ref_image, ref_bbox_3d, ref_label, ref_class = self.get_reference(object_meta)
         if self.rot_test_scene is not None:
             bbox_3d = ref_bbox_3d
 
@@ -182,7 +182,7 @@ class NuScenesDataset(data.Dataset):
         mask_tensor = (self.resize(mask_tensor) > 0.5).float()
 
         # Inpainted image
-        inpaint_tensor = image_tensor * mask_tensor
+        inpaint_tensor = image_tensor.clone()# * mask_tensor
 
         data = {
             "id_name": id_name,
@@ -191,6 +191,7 @@ class NuScenesDataset(data.Dataset):
             "inpaint_mask": mask_tensor,
             "bbox_image_coords": bbox_image_coords,
             "bbox_3d": bbox_3d,
+            "ref_class": ref_class,
             "cond": {
                 "ref_image": ref_image_tensor,
                 "ref_bbox": bbox_cond_coords,
@@ -198,7 +199,7 @@ class NuScenesDataset(data.Dataset):
             }
         }
 
-        if self.state == "test":
+        if self.state != "train":
             data["range_depth"] = range_depth
             data["range_int"] = range_int
             data["crop_left"] = crop_left
@@ -232,6 +233,7 @@ class NuScenesDataset(data.Dataset):
 
         ref_bbox_3d = ref_scene_info["gt_bboxes_3d_corners"][ref_obj_idx]
         ref_label = ref_scene_info["gt_labels"][ref_obj_idx]
+        ref_class = reference_meta["object_class"]
         
         image = Image.open(image_path).convert("RGB")
         W, H = image.size
@@ -245,7 +247,7 @@ class NuScenesDataset(data.Dataset):
         h = np.maximum(y2 - y1 + 1, 1)
         ref_image = image_np[y1:y1+h, x1:x1+w]
 
-        return ref_image, ref_bbox_3d, ref_label
+        return ref_image, ref_bbox_3d, ref_label, ref_class
     
     def get_id_name(self, object_meta):
         id_name = "sample-{}_track-{}_time-{}_{}_{}_rot-{}".format(
