@@ -17,6 +17,7 @@ from ldm.data.utils import (
     get_2d_bbox,
     get_camera_coords,
     get_inpaint_mask,
+    get_range_inpaint_mask,
 )
 from ldm.data.lidar_converter import LidarConverter
 
@@ -55,6 +56,8 @@ class NuScenesDataset(data.Dataset):
         ref_mode="same-ref", # same-ref, track-ref, random-ref, no-ref
         image_height=512,
         image_width=512,
+        range_height=64,
+        range_width=1024,
         reference_image_min_h=40,
         reference_image_min_w=40,
         frustum_iou_max=0.7,
@@ -62,35 +65,39 @@ class NuScenesDataset(data.Dataset):
         rot_every_angle=0,
         rot_test_scene=None, # used for rotation test
         use_lidar=False,
+        use_camera=True,
     ) -> None:
         self.state = state
         self.ref_aug = ref_aug
         self.ref_mode = ref_mode
         self.expand_mask_ratio = expand_mask_ratio
         self.expand_ref_ratio = expand_ref_ratio
-        self.rot_test_scene = rot_test_scene
         self.prob_use_3d_edit_mask = prob_use_3d_edit_mask
+        self.rot_test_scene = rot_test_scene
         self.use_lidar = use_lidar
+        self.use_camera = use_camera
+
+        # Dimensions
         self.image_height = image_height
         self.image_width = image_width
+        self.range_height = range_height
+        self.range_width = range_width
 
-        self.all_objects_meta = pd.read_csv(object_database_path, index_col=0)
-        # filter out small, occluded objects
-        self.all_objects_meta = self.all_objects_meta[
-            (self.all_objects_meta["reference_image_h"] >= reference_image_min_w) &
-            (self.all_objects_meta["reference_image_w"] >= reference_image_min_h) &
-            (self.all_objects_meta["max_iou_overlap"] <= frustum_iou_max) &
-            self.all_objects_meta["object_class"].isin(object_classes) &
-            (self.all_objects_meta["camera_visibility_mask"] >= camera_visibility_min)
+        self.objects_meta = pd.read_csv(object_database_path, index_col=0)
+        # Filter out small, occluded objects
+        self.objects_meta = self.objects_meta[
+            (self.objects_meta["reference_image_h"] >= reference_image_min_w) &
+            (self.objects_meta["reference_image_w"] >= reference_image_min_h) &
+            (self.objects_meta["max_iou_overlap"] <= frustum_iou_max) &
+            (self.objects_meta["object_class"].isin(object_classes)) &
+            (self.objects_meta["camera_visibility_mask"] >= camera_visibility_min)
         ]
 
+        # Select an object from each class when testing
         if self.state == "test":
-            # select an object from each class
-            self.objects_meta = self.all_objects_meta.groupby("object_class").apply(
+            self.objects_meta = self.objects_meta.groupby("object_class").apply(
                 lambda x: x.sample(1)
             ).reset_index(drop=True)
-        else:
-            self.objects_meta = self.all_objects_meta
 
         if rot_every_angle != 0:
             angles = np.arange(0, 360, rot_every_angle)
@@ -114,7 +121,7 @@ class NuScenesDataset(data.Dataset):
                 A.ElasticTransform(p=0.3)
             ]
         self.ref_transform = A.Compose(ref_augs)
-        self.resize = T.Resize([image_height, image_width])
+        self.image_resize = T.Resize([image_height, image_width])
 
     def __getitem__(self, index):
         object_meta = self.objects_meta.iloc[index]
@@ -127,82 +134,34 @@ class NuScenesDataset(data.Dataset):
             scene_info = self.scenes_info[object_meta["scene_token"]]
             cam_idx = object_meta["cam_idx"]
 
-        id_name = self.get_id_name(object_meta)
-        
-        lidar2image = scene_info["lidar2image_transforms"][cam_idx]
-        lidar2camera = scene_info["lidar2camera_transforms"][cam_idx]
-        image_path = scene_info["image_paths"][cam_idx]
-        bbox_3d = scene_info["gt_bboxes_3d_corners"][object_meta["scene_obj_idx"]]
-
-        # Range image
-        image_depth, image_int, bbox_range_coords, crop_left, range_depth, range_int = self.get_rasterized_lidar(scene_info, bbox_3d)
-
-        # Image
-        if not self.use_lidar:
-            image = Image.open(image_path).convert("RGB")
-            W, H = image.size
-            image_tensor = get_tensor()(np.array(image))
-            image_tensor = self.resize(image_tensor)
-
-        if self.use_lidar:
-            image_tensor = image_depth
-            W, H = image_tensor.shape[2], image_tensor.shape[1]
-
         # Reference
         ref_image, ref_bbox_3d, ref_label, ref_class = self.get_reference(object_meta)
-        if self.rot_test_scene is not None:
-            bbox_3d = ref_bbox_3d
 
-        ref_image = self.ref_transform(image=ref_image)["image"]
-        ref_image = Image.fromarray(ref_image)
-        ref_image_tensor = get_tensor_clip()(ref_image)
+        if self.rot_test_scene is None:
+            bbox_3d = scene_info["gt_bboxes_3d_corners"][object_meta["scene_obj_idx"]]
+        else:
+            bbox_3d = translate_bbox(ref_bbox_3d, [0, 9, -1])
 
         bbox_rot_angle = object_meta.get("bbox_rot_angle", 0)
         bbox_3d = rotate_bbox(bbox_3d, bbox_rot_angle)
 
-        if self.rot_test_scene is not None:
-            bbox_3d = translate_bbox(bbox_3d, [0, 9, -1])
-
-        if not self.use_lidar:
-            bbox_image_coords = get_image_coords(bbox_3d, lidar2image)
-            bbox_image_coords[..., 0] /= W
-            bbox_image_coords[..., 1] /= H
-            bbox_cond_coords = get_camera_coords(bbox_3d, lidar2camera)
-        if self.use_lidar:
-            bbox_image_coords = bbox_range_coords[:, :2]
-            bbox_cond_coords = bbox_range_coords
-
-        # Mask
-        use_3d_edit_mask = (random.random() < self.prob_use_3d_edit_mask)
-        mask_np = get_inpaint_mask(
-            bbox_3d, lidar2image, H, W, self.expand_mask_ratio, use_3d_edit_mask, self.use_lidar, crop_left
-        )
-        mask_image = Image.fromarray(mask_np)
-        mask_tensor = 1 - get_tensor(normalize=False, toTensor=True)(mask_image)
-        mask_tensor = (self.resize(mask_tensor) > 0.5).float()
-
-        # Inpainted image
-        inpaint_tensor = image_tensor.clone()# * mask_tensor
-
         data = {
-            "id_name": id_name,
-            "GT": image_tensor,
-            "inpaint_image": inpaint_tensor,
-            "inpaint_mask": mask_tensor,
-            "bbox_image_coords": bbox_image_coords,
+            "id_name": self.get_id_name(object_meta),
             "bbox_3d": bbox_3d,
             "ref_class": ref_class,
-            "cond": {
-                "ref_image": ref_image_tensor,
-                "ref_bbox": bbox_cond_coords,
-                "ref_label": ref_label,
-            }
         }
 
-        if self.state != "train":
-            data["range_depth"] = range_depth
-            data["range_int"] = range_int
-            data["crop_left"] = crop_left
+        # Camera
+        if self.use_camera:
+            data["image"] = self.get_image_data(scene_info, cam_idx, bbox_3d)
+            data["image"]["cond"]["ref_image"] = ref_image
+            data["image"]["cond"]["ref_label"] = ref_label
+
+        # Lidar
+        if self.use_lidar:
+            data["lidar"] = self.get_range_data(scene_info, bbox_3d)
+            data["lidar"]["cond"]["ref_image"] = ref_image
+            data["lidar"]["cond"]["ref_label"] = ref_label
 
         return data
     
@@ -247,6 +206,10 @@ class NuScenesDataset(data.Dataset):
         h = np.maximum(y2 - y1 + 1, 1)
         ref_image = image_np[y1:y1+h, x1:x1+w]
 
+        ref_image = self.ref_transform(image=ref_image)["image"]
+        ref_image = Image.fromarray(ref_image)
+        ref_image = get_tensor_clip()(ref_image)
+
         return ref_image, ref_bbox_3d, ref_label, ref_class
     
     def get_id_name(self, object_meta):
@@ -263,7 +226,7 @@ class NuScenesDataset(data.Dataset):
 
         return id_name
     
-    def get_rasterized_lidar(self, scene_info, bbox_3d):
+    def get_range_data(self, scene_info, bbox_3d):
         lidar_converter = LidarConverter()
 
         if "range_depth_path" in scene_info and "range_intensity_path" in scene_info:
@@ -279,23 +242,84 @@ class NuScenesDataset(data.Dataset):
         # Get range coords of the bbox
         bbox_range_coords = lidar_converter.get_range_coords(bbox_3d)
 
+        range_depth_orig = range_depth.copy()
+
         # Preprocess range data
-        image_depth, image_int, bbox_range_coords, crop_left = lidar_converter.apply_default_transforms(
+        range_depth, range_int, bbox_range_coords, range_shift_left = lidar_converter.apply_default_transforms(
             range_depth=range_depth,
             range_int=range_int,
             bbox_range_coords=bbox_range_coords,
-            image_height=self.image_height,
-            image_width=self.image_width,
+            height=self.range_height,
+            width=self.range_width,
         )
 
-        # Normalise bbox_range_coords
+        range_depth = get_tensor(normalize=False, toTensor=True)(range_depth)
+        range_int = (range_int - range_int.min()) / (range_int.max() - range_int.min() + 1e-6)
+        range_int = get_tensor(normalize=False, toTensor=True)(range_int)
+
+        # Normalise bbox coords
         bbox_range_coords = bbox_range_coords.astype(np.float32)
-        bbox_range_coords[..., 0] /= image_depth.shape[1]
-        bbox_range_coords[..., 1] /= image_depth.shape[0]
+        bbox_range_coords[..., 0] /= self.range_width
+        bbox_range_coords[..., 1] /= self.range_height
 
-        # Convert to RGB and resize
-        image_depth = np.tile(image_depth[:, :, None], 3)
-        image_depth = get_tensor(normalize=False, toTensor=True)(image_depth)
-        image_depth = self.resize(image_depth)
+        # Mask
+        range_mask = get_range_inpaint_mask(
+            bbox_3d, self.range_height, self.range_width, self.expand_mask_ratio, range_shift_left,
+        )
 
-        return image_depth, image_int, bbox_range_coords, crop_left, range_depth, range_int
+        # Inpainted range
+        range_depth_inpaint = range_depth.clone() * range_mask
+        range_int_inpaint = range_int.clone() * range_mask
+
+        data = {
+            "range_depth": range_depth,
+            "range_int": range_int,
+            "range_mask": range_mask,
+            "range_depth_inpaint": range_depth_inpaint,
+            "range_int_inpaint": range_int_inpaint,
+            "range_shift_left": range_shift_left,
+            "range_depth_orig": range_depth_orig,
+            "cond": {
+                "ref_bbox": bbox_range_coords,
+            }
+        }
+
+        return data
+    
+    def get_image_data(self, scene_info, cam_idx, bbox_3d):
+        lidar2image = scene_info["lidar2image_transforms"][cam_idx]
+        lidar2camera = scene_info["lidar2camera_transforms"][cam_idx]
+        image_path = scene_info["image_paths"][cam_idx]
+
+        # Image
+        image = Image.open(image_path).convert("RGB")
+        W, H = image.size
+        image = get_tensor()(np.array(image))
+        image = self.image_resize(image)
+
+        # BBox
+        bbox_image_coords = get_image_coords(bbox_3d, lidar2image)
+        bbox_image_coords[..., 0] /= W
+        bbox_image_coords[..., 1] /= H
+        bbox_camera_coords = get_camera_coords(bbox_3d, lidar2camera)
+
+        # Mask
+        use_3d_edit_mask = (random.random() < self.prob_use_3d_edit_mask)
+        image_mask = get_inpaint_mask(
+            bbox_3d, lidar2image, H, W, self.expand_mask_ratio, use_3d_edit_mask,
+        )
+        image_mask = self.image_resize(image_mask.unsqueeze(0))
+
+        # Inpainted image
+        image_inpaint = image.clone() * image_mask
+
+        data = {
+            "GT": image,
+            "inpaint_image": image_inpaint,
+            "inpaint_mask": image_mask,
+            "cond": {
+                "ref_bbox": bbox_image_coords,
+            }
+        }
+
+        return data

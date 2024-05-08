@@ -1,7 +1,7 @@
 import copy
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
+import torch
 
 from ldm.data.lidar_converter import LidarConverter
 
@@ -103,20 +103,12 @@ def get_camera_coords(bbox_corners, lidar2camera):
 
     return coords[..., :3]
 
-def get_inpaint_mask(bbox_corners, transform, H, W, expand_ratio=0.1, use_3d_edit_mask=True, use_lidar=False, crop_left=None):
+def get_inpaint_mask(bbox_corners, transform, H, W, expand_ratio=0.1, use_3d_edit_mask=True):
     if use_3d_edit_mask:
         bbox_corners = expand_bbox_corners(bbox_corners, expand_ratio)
         mask = np.zeros((H, W), dtype=np.uint8)
 
-        if not use_lidar:
-            coords = get_image_coords(bbox_corners, transform)
-        else:
-            lidar_converter = LidarConverter()
-            coords = lidar_converter.get_range_coords(bbox_corners)
-            _, _, coords, _ = lidar_converter.apply_default_transforms(
-                coords, image_height=H, image_width=W, crop_left=crop_left
-            )
-            coords = coords[:, :2]
+        coords = get_image_coords(bbox_corners, transform)
 
         # Draw 3D boxes
         for polygon in [
@@ -135,7 +127,33 @@ def get_inpaint_mask(bbox_corners, transform, H, W, expand_ratio=0.1, use_3d_edi
         x1, y1, x2, y2 = bbox_2d
         mask[y1:y2, x1:x2] = 1
 
-    mask = ((mask > 0.5) * 255).astype(np.uint8)
+    mask = 1. - torch.tensor(mask > 0.5).float()
+    return mask
+
+
+def get_range_inpaint_mask(bbox_corners, range_height, range_width, expand_ratio=0.1, crop_left=None):
+    bbox_corners = expand_bbox_corners(bbox_corners, expand_ratio)
+    mask = np.zeros((range_height, range_width), dtype=np.uint8)
+
+    lidar_converter = LidarConverter()
+    coords = lidar_converter.get_range_coords(bbox_corners)
+    _, _, coords, _ = lidar_converter.apply_default_transforms(
+        coords, height=range_height, width=range_width, crop_left=crop_left
+    )
+    coords = coords[:, :2]
+
+    for polygon in [
+        [0, 1, 2, 3],
+        [4, 5, 6, 7],
+        [0, 1, 5, 4],
+        [2, 3, 7, 6],
+        [0, 4, 7, 3],
+        [1, 5, 6, 2],
+    ]:
+        points = coords[polygon].astype(np.int32)
+        cv2.fillPoly(mask, [points], 1, cv2.LINE_AA)
+
+    mask = 1. - torch.tensor(mask > 0.5).float()
     return mask
 
 

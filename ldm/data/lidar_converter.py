@@ -57,11 +57,11 @@ class LidarConverter:
         yaw = -np.arctan2(scan_y, scan_x)
         pitch = np.arcsin(scan_z / depth)
 
-        # get projections in image coords
+        # get projections in range coords
         proj_x = 0.5 * (yaw / np.pi + 1.0)  # in [0.0, 1.0]
         proj_y = 1.0 - (pitch + abs(self.fov_down)) / self.fov_range  # in [0.0, 1.0]
 
-        # scale to image size using angular resolution
+        # scale to range size using angular resolution
         proj_x *= self.W  # in [0.0, W]
         proj_y *= self.H  # in [0.0, H]
 
@@ -361,7 +361,7 @@ class LidarConverter:
         bbox_range_coords,
         range_depth=None,
         range_int=None,
-        image_width=512,
+        width=1024,
         crop_left=None,
     ):
         """
@@ -371,10 +371,10 @@ class LidarConverter:
             bbox_range_coords: np.array, shape (8, 3)
             range_depth: np.array, shape (H, W)
             range_int: np.array, shape (H, W)
-            image_width: int
+            width: int
         Returns:
-            range_depth: np.array, shape (H, image_width)
-            range_int: np.array, shape (H, image_width)
+            range_depth: np.array, shape (H, width)
+            range_int: np.array, shape (H, width)
             bbox_range_coords: np.array, shape (8, 3)
             crop_left: int, left-side crop from range view
         """
@@ -385,18 +385,19 @@ class LidarConverter:
 
         center_x = int(np.mean(bbox_range_coords[:, 0]))
         if crop_left is None:
-            d_left = random.randint(image_width // 4, image_width - image_width // 4)
+            d_left = random.randint(width // 4, width - width // 4)
         else:
             d_left = center_x - crop_left
-        d_right = image_width - d_left
+        d_right = width - d_left
 
         if range_depth is not None:
             range_depth = range_depth[:, center_x - d_left : center_x + d_right]
         if range_int is not None:
             range_int = range_int[:, center_x - d_left : center_x + d_right]
         bbox_range_coords = bbox_range_coords - np.array([center_x - d_left, 0, 0])
+        bbox_range_coords[:, 0] %= width
 
-        crop_left = center_x - d_left
+        crop_left = (center_x - d_left) % width
         return range_depth, range_int, bbox_range_coords, crop_left
 
     def _copy_tensors(
@@ -421,8 +422,8 @@ class LidarConverter:
         bbox_range_coords,
         range_depth=None,
         range_int=None,
-        image_height=512,
-        image_width=512,
+        height=32,
+        width=1024,
         crop_left=None,
     ):
         """
@@ -432,25 +433,25 @@ class LidarConverter:
             bbox_range_coords: np.array, shape (8, 3)
             range_depth: np.array, shape (H, W)
             range_int: np.array, shape (H, W)
-            image_height: int
-            image_width: int
+            height: int
+            width: int
             crop_left: int, left-side crop from range view
         Returns:
-            range_depth: np.array, shape (image_height, image_width)
-            range_int: np.array, shape (image_height, image_width)
+            range_depth: np.array, shape (height, width)
+            range_int: np.array, shape (height, width)
             bbox_range_coords: np.array, shape (8, 3)
         """
         range_depth, range_int, bbox_range_coords = self.resize(
-            range_depth, range_int, bbox_range_coords, new_H=image_height // 2
+            range_depth, range_int, bbox_range_coords, new_H=height
         )
-        range_depth, range_int, bbox_range_coords = self.vertical_pad(
-            range_depth, range_int, bbox_range_coords, pad=image_height // 2
-        )
+        # range_depth, range_int, bbox_range_coords = self.vertical_pad(
+        #     range_depth, range_int, bbox_range_coords, pad=height // 2
+        # )
         range_depth, range_int, bbox_range_coords = self.tile(
             range_depth, range_int, bbox_range_coords, n=3
         )
         range_depth, range_int, bbox_range_coords, crop_left = self.bbox_crop(
-            bbox_range_coords, range_depth, range_int, image_width=image_width, crop_left=crop_left
+            bbox_range_coords, range_depth, range_int, width=width, crop_left=crop_left
         )
 
         return range_depth, range_int, bbox_range_coords, crop_left
@@ -462,8 +463,8 @@ class LidarConverter:
         range_int_crop=None,
         range_depth=None,
         range_int=None,
-        image_height=512,
-        image_width=512,
+        height=32,
+        width=1024,
         mask=None,
     ):
         assert range_depth is None or range_depth_crop is not None, "If range_depth is not None, range_depth_crop must be provided"
@@ -478,15 +479,14 @@ class LidarConverter:
             if range_depth_crop is not None: range_depth_crop[~mask] = ignore
             if range_int_crop is not None: range_int_crop[~mask] = ignore
 
-        range_depth_crop, range_int_crop, _ = self.undo_vertical_pad(
-            range_depth_crop, range_int_crop, pad=image_height // 2
-        )
+        # range_depth_crop, range_int_crop, _ = self.undo_vertical_pad(
+        #     range_depth_crop, range_int_crop, pad=height // 2
+        # )
 
         range_depth_crop, range_int_crop, _ = self.resize(
-            range_depth_crop, range_int_crop, new_W=image_width, new_H=range_depth.shape[0]
+            range_depth_crop, range_int_crop, new_W=width, new_H=range_depth.shape[0]
         )
 
-        crop_left = crop_left % range_depth.shape[1]
         if range_depth is not None:
             if mask is not None:
                 range_depth_aux = np.zeros_like(range_depth) + ignore
@@ -495,7 +495,7 @@ class LidarConverter:
 
             right = min(crop_left + range_depth_crop.shape[1], range_depth.shape[1])
             range_depth_aux[:, crop_left : right] = range_depth_crop[:, : right - crop_left]
-            range_depth_aux[:, :image_width - (right - crop_left)] = range_depth_crop[:, right - crop_left :]
+            range_depth_aux[:, :width - (right - crop_left)] = range_depth_crop[:, right - crop_left :]
 
             range_depth = np.where(range_depth_aux == ignore, range_depth, range_depth_aux)
         if range_int is not None:
@@ -506,7 +506,7 @@ class LidarConverter:
 
             right = min(crop_left + range_int_crop.shape[1], range_int.shape[1])
             range_int_aux[:, crop_left : right] = range_int_crop[:, : right - crop_left]
-            range_int_aux[:, :image_width - (right - crop_left)] = range_int_crop[:, right - crop_left :]
+            range_int_aux[:, :width - (right - crop_left)] = range_int_crop[:, right - crop_left :]
 
             range_int = np.where(range_int_aux == ignore, range_int, range_int_aux)
 
