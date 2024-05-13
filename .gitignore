@@ -3,6 +3,7 @@ magicdrive-log
 magicdrive-log/*
 *.png
 *.jpg
+*.csv
 perception/cross_view_transformers/splits/*
 tmp
 tmp/*
