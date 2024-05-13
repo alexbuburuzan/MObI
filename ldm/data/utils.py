@@ -5,17 +5,18 @@ import torch
 
 from ldm.data.lidar_converter import LidarConverter
 
-def get_image_coords(bbox_corners, lidar2image):
+def get_image_coords(bbox_corners, lidar2image, include_depth=False):
     """
     Get the camera coordinates of the 3D bounding box
 
     Args:
         bbox_corners: np.array, shape (8, 3)
         lidar2image: np.array, shape (4, 4)
+        include_depth: bool, whether to include the depth dimension
 
     Returns:
-        np.array, shape (8, 2)
-        Each row is the x, y coordinates of the 3D bounding box in the image
+        np.array, shape (8, 3) if include_depth is True, else (8, 2)
+        Each row is the x, y, (depth) coordinates of the 3D bounding box in the image frame
         x \in [0, W], y \in [0, H]
     """
     coords = np.concatenate(
@@ -28,7 +29,10 @@ def get_image_coords(bbox_corners, lidar2image):
     coords[..., 2] = np.clip(coords[..., 2], a_min=1e-5, a_max=1e5)
     coords[..., :2] /= coords[..., 2, None]
 
-    coords = coords[..., :2].reshape(8, 2)
+    if include_depth:
+        coords = coords[..., :3].reshape(8, 3)
+    else:
+        coords = coords[..., :2].reshape(8, 2)
 
     return coords
 
