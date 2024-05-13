@@ -3,8 +3,6 @@ import importlib
 import torch
 import numpy as np
 from collections import abc
-from einops import rearrange
-from functools import partial
 
 import multiprocessing as mp
 from threading import Thread
@@ -201,3 +199,21 @@ def parallel_data_prefetch(
         return out
     else:
         return gather_res
+    
+def make_contiguous(x):
+    if isinstance(x, dict):
+        return {k: make_contiguous(v) for k, v in x.items()}
+    elif x is None:
+        return x
+    return x.to(memory_format=torch.contiguous_format).float()
+
+
+def cat_interleave(tensors):
+    if len(tensors) == 0:
+        return tensors
+    
+    tensors = [t.unsqueeze(1) for t in tensors]
+    tensors = torch.cat(tensors, dim=1)
+    tensors = tensors.reshape(-1, *tensors.shape[2:])
+
+    return tensors
