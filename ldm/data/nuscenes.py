@@ -149,6 +149,8 @@ class NuScenesDataset(data.Dataset):
             "id_name": self.get_id_name(object_meta),
             "bbox_3d": bbox_3d,
             "ref_class": ref_class,
+            "image" : {},
+            "lidar" : {},
         }
 
         # Camera
@@ -162,6 +164,9 @@ class NuScenesDataset(data.Dataset):
             data["lidar"] = self.get_range_data(scene_info, bbox_3d)
             data["lidar"]["cond"]["ref_image"] = ref_image
             data["lidar"]["cond"]["ref_label"] = ref_label
+
+            if self.use_camera:
+                data["image"]["cond"]["ref_bbox"][..., 2] = data["lidar"]["cond"]["ref_bbox"][..., 2]
 
         return data
     
@@ -266,6 +271,7 @@ class NuScenesDataset(data.Dataset):
         range_mask = get_range_inpaint_mask(
             bbox_3d, self.range_height, self.range_width, self.expand_mask_ratio, range_shift_left,
         )
+        range_mask = range_mask.unsqueeze(0)
 
         # Inpainted range
         range_depth_inpaint = range_depth.clone() * range_mask
@@ -298,7 +304,7 @@ class NuScenesDataset(data.Dataset):
         image = self.image_resize(image)
 
         # BBox
-        bbox_image_coords = get_image_coords(bbox_3d, lidar2image)
+        bbox_image_coords = get_image_coords(bbox_3d, lidar2image, include_depth=True)
         bbox_image_coords[..., 0] /= W
         bbox_image_coords[..., 1] /= H
         bbox_camera_coords = get_camera_coords(bbox_3d, lidar2camera)
