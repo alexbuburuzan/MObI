@@ -17,17 +17,16 @@ from functools import partial
 from tqdm import tqdm
 from torchvision.utils import make_grid
 from pytorch_lightning.utilities.distributed import rank_zero_only
-from ldm.util import log_txt_as_img, exists, default, ismap, isimage, mean_flat, count_params, instantiate_from_config
+from ldm.util import log_txt_as_img, exists, default, ismap, isimage, mean_flat, count_params, instantiate_from_config, make_contiguous, cat_interleave
 from ldm.modules.ema import LitEma
 from ldm.modules.distributions.distributions import normal_kl, DiagonalGaussianDistribution
-from ldm.models.autoencoder import VQModelInterface, IdentityFirstStage, AutoencoderKL
+from ldm.models.autoencoder import IdentityFirstStage, AutoencoderKL
+from ldm.models.lidar_diffusion import VQModelInterface
 from ldm.modules.diffusionmodules.util import make_beta_schedule, extract_into_tensor, noise_like
 from ldm.models.diffusion.ddim import DDIMSampler
 from torchvision.transforms import Resize
-import math
-import time
+
 import random
-from torch.autograd import Variable
 import torch.nn.functional as F
 
 from omegaconf.listconfig import ListConfig
@@ -45,8 +44,6 @@ def disabled_train(self, mode=True):
 
 def uniform_on_device(r1, r2, shape, device):
     return (r1 - r2) * torch.rand(*shape, device=device) + r2
-
-
 
 
 class DDPM(pl.LightningModule):
@@ -338,20 +335,15 @@ class DDPM(pl.LightningModule):
 
     def get_input(self, batch, k):
         if k == "inpaint":
-            x = batch['GT']
-            mask = batch['inpaint_mask']
-            inpaint = batch['inpaint_image']
-            cond = batch['cond']
+            image_data = batch.get("image")
+            lidar_data = batch.get("lidar")
         else:
-            x = batch[k]
-        if len(x.shape) == 3:
-            x = x[..., None]
-        # x = rearrange(x, 'b h w c -> b c h w')
-        x = x.to(memory_format=torch.contiguous_format).float()
-        mask = mask.to(memory_format=torch.contiguous_format).float()
-        inpaint = inpaint.to(memory_format=torch.contiguous_format).float()
-        cond = {k: v.to(memory_format=torch.contiguous_format).float() for k, v in cond.items()}
-        return x, inpaint, mask, cond
+            raise NotImplementedError(f"key {k} not implemented")
+
+        image_data = make_contiguous(image_data)
+        lidar_data = make_contiguous(lidar_data)
+
+        return image_data, lidar_data
 
     def shared_step(self, batch):
         x = self.get_input(batch, self.first_stage_key)
@@ -445,6 +437,7 @@ class LatentDiffusion(DDPM):
     def __init__(self,
                  first_stage_config,
                  cond_stage_config,
+                 lidar_stage_config=None,
                  num_timesteps_cond=None,
                  cond_stage_key="image",
                  cond_stage_trainable=False,
@@ -485,6 +478,8 @@ class LatentDiffusion(DDPM):
 
         self.instantiate_first_stage(first_stage_config)
         self.instantiate_cond_stage(cond_stage_config)
+        self.instantiate_lidar_stage(lidar_stage_config)
+        self.lidar_latent_shape = None
 
         self.cond_stage_forward = cond_stage_forward
         self.clip_denoised = False
@@ -527,10 +522,22 @@ class LatentDiffusion(DDPM):
             self.make_cond_schedule()
 
     def instantiate_first_stage(self, config): # this
-        model = instantiate_from_config(config)
-        self.first_stage_model = model.eval()
-        self.first_stage_model.train = disabled_train
-        self.first_stage_model.requires_grad_(False)
+        if config is None:
+            self.first_stage_model = None
+        else:
+            model = instantiate_from_config(config)
+            self.first_stage_model = model.eval()
+            self.first_stage_model.train = disabled_train
+            self.first_stage_model.requires_grad_(False)
+
+    def instantiate_lidar_stage(self, config):
+        if config is None:
+            self.lidar_stage_model = None
+        else:
+            model = instantiate_from_config(config)
+            self.lidar_stage_model = model.eval()
+            self.lidar_stage_model.train = disabled_train
+            self.lidar_stage_model.requires_grad_(False)
 
     def instantiate_cond_stage(self, config):
         if not self.cond_stage_trainable:
@@ -689,25 +696,9 @@ class LatentDiffusion(DDPM):
             raise NotImplementedError
 
         return fold, unfold, normalization, weighting
-
+    
     @torch.no_grad()
-    def get_input(self, batch, k, return_first_stage_outputs=False, force_c_encode=False,
-                  cond_key=None, return_original_cond=False, bs=None,get_mask=False,get_reference=False):
-        
-        x, inpaint, mask, cond = super().get_input(batch, k)
-        if bs is not None:
-            x = x[:bs]
-            inpaint = inpaint[:bs]
-            mask = mask[:bs]
-            cond = {k: v[:bs] for k, v in cond.items()}
-        x = x.to(self.device)
-        encoder_posterior = self.encode_first_stage(x)
-        z = self.get_first_stage_encoding(encoder_posterior).detach()
-        encoder_posterior_inpaint = self.encode_first_stage(inpaint)
-        z_inpaint = self.get_first_stage_encoding(encoder_posterior_inpaint).detach()
-        mask_resize = Resize([z.shape[-1],z.shape[-1]])(mask)
-        z_new = torch.cat((z,z_inpaint,mask_resize),dim=1)
-
+    def process_conditioning(self, cond, cond_key=None, force_c_encode=False, bs=None, batch=None):
         if self.model.conditioning_key is not None:
             if cond_key is None:
                 cond_key = self.cond_stage_key
@@ -738,27 +729,89 @@ class LatentDiffusion(DDPM):
             if self.use_positional_encodings:
                 pos_x, pos_y = self.compute_latent_shifts(batch)
                 c = {'pos_x': pos_x, 'pos_y': pos_y}
-        out = [z_new, c]
-        if return_first_stage_outputs:
-            if self.first_stage_key=='inpaint':
-                xrec = self.decode_first_stage(z[:,:4,:,:])
-            else:
-                xrec = self.decode_first_stage(z)
-            out.extend([x, xrec])
-        if return_original_cond:
-            out.append(xc)
-        if get_mask:
-            out.append(mask)
-        if get_reference:
-            out.append(cond["ref_image"])
+
+        return c, xc
+
+    @torch.no_grad()
+    def get_input(self, batch, k, return_first_stage_outputs=False, force_c_encode=False,
+                  cond_key=None, return_original_cond=False, bs=None,get_mask=False,get_reference=False):
+        
+        image_data, lidar_data = super().get_input(batch, k)
+
+        def select_first_samples(x, num_samples):
+            if isinstance(x, dict):
+                return {k: select_first_samples(v, num_samples) for k, v in x.items()}
+            elif isinstance(x, torch.Tensor):
+                return x[:num_samples]
+            return None
+
+        if bs is not None:
+            image_data = select_first_samples(image_data, bs)
+            lidar_data = select_first_samples(lidar_data, bs)
+
+        z_image, z_lidar = self.encode_all_stages(
+            image_gt=image_data.get("GT"),
+            image_inpaint=image_data.get("inpaint_image"),
+            image_mask=image_data.get("inpaint_mask"),
+            range_gt=lidar_data.get("range_depth"),
+            range_inpaint=lidar_data.get("range_depth_inpaint"),
+            range_mask=lidar_data.get("range_mask"),
+        )
+
+        out = {
+            "z": [],
+            "cond": [],
+        }
+        if self.first_stage_model is not None:
+            c, xc = self.process_conditioning(image_data["cond"])
+            out["z"].append(z_image)
+            out["cond"].append(c)
+
+            out["image"] = {}
+            if return_original_cond: out["image"]["orig_cond"] = xc
+            if get_mask: out["image"]["mask"] = image_data["inpaint_mask"]
+            if get_reference: out["image"]["ref_image"] = image_data["cond"]["ref_image"]
+
+            if return_first_stage_outputs:
+                out["image"]["gt"] = image_data["GT"]
+                out["image"]["gt_rec"] = self.decode_first_stage(
+                    z_image[:, :4, ...]
+                )
+
+        if self.lidar_stage_model is not None:
+            c, xc = self.process_conditioning(lidar_data["cond"])
+            # resize lidar feature map
+            self.lidar_latent_shape = z_lidar.shape[-2:]
+            out["z"].append(
+                F.interpolate(z_lidar, size=z_image.shape[-2:], mode="bilinear")
+            )
+            out["cond"].append(c)
+
+            out["lidar"] = {}
+            if return_original_cond: out["lidar"]["orig_cond"] = xc
+            if get_mask: out["lidar"]["mask"] = lidar_data["range_mask"]
+            if get_reference: out["lidar"]["ref_image"] = lidar_data["cond"]["ref_image"]
+
+            if return_first_stage_outputs:
+                out["lidar"]["gt"] = lidar_data["range_depth"]
+                out["lidar"]['gt_rec'] = self.decode_first_stage(
+                    z_lidar[:, :8, ...], module_name="lidar_stage_model"
+                )
+
+        out["z"] = cat_interleave(out["z"])
+        out["cond"] = {
+            k : cat_interleave([d[k] for d in out["cond"]]) for k in self.cond_stage_key
+        }
+
         return out
         
     @torch.no_grad()
-    def decode_first_stage(self, z, predict_cids=False, force_not_quantize=False):
+    def decode_first_stage(self, z, predict_cids=False, force_not_quantize=False, module_name="first_stage_model"):
+        module = getattr(self, module_name)
         if predict_cids:
             if z.dim() == 4:
                 z = torch.argmax(z.exp(), dim=1).long()
-            z = self.first_stage_model.quantize.get_codebook_entry(z, shape=None)
+            z = module.quantize.get_codebook_entry(z, shape=None)
             z = rearrange(z, 'b h w c -> b c h w').contiguous()
 
         z = 1. / self.scale_factor * z
@@ -784,13 +837,12 @@ class LatentDiffusion(DDPM):
                 z = z.view((z.shape[0], -1, ks[0], ks[1], z.shape[-1]))  # (bn, nc, ks[0], ks[1], L )
 
                 # 2. apply model loop over last dim
-                if isinstance(self.first_stage_model, VQModelInterface):
-                    output_list = [self.first_stage_model.decode(z[:, :, :, :, i],
-                                                                 force_not_quantize=predict_cids or force_not_quantize)
+                if isinstance(module, VQModelInterface):
+                    output_list = [module.decode(z[:, :, :, :, i], force_not_quantize=predict_cids or force_not_quantize)
                                    for i in range(z.shape[-1])]
                 else:
 
-                    output_list = [self.first_stage_model.decode(z[:, :, :, :, i])
+                    output_list = [module.decode(z[:, :, :, :, i])
                                    for i in range(z.shape[-1])]
 
                 o = torch.stack(output_list, axis=-1)  # # (bn, nc, ks[0], ks[1], L)
@@ -802,26 +854,29 @@ class LatentDiffusion(DDPM):
                 decoded = decoded / normalization  # norm is shape (1, 1, h, w)
                 return decoded
             else:
-                if isinstance(self.first_stage_model, VQModelInterface):
-                    return self.first_stage_model.decode(z, force_not_quantize=predict_cids or force_not_quantize)
+                if isinstance(module, VQModelInterface):
+                    return module.decode(z, force_not_quantize=predict_cids or force_not_quantize)
                 else:
-                    return self.first_stage_model.decode(z)
+                    return module.decode(z)
 
         else:
-            if isinstance(self.first_stage_model, VQModelInterface):
-                return self.first_stage_model.decode(z, force_not_quantize=predict_cids or force_not_quantize)
+            if isinstance(module, VQModelInterface):
+                return module.decode(z, force_not_quantize=predict_cids or force_not_quantize)
             else:
                 if self.first_stage_key=='inpaint':
-                    return self.first_stage_model.decode(z[:,:4,:,:])
+                    assert module_name != "lidar_stage_model"
+                    return module.decode(z[:,:4,:,:])
                 else:
-                    return self.first_stage_model.decode(z)
+                    return module.decode(z)
+
 
     # same as above but without decorator
-    def differentiable_decode_first_stage(self, z, predict_cids=False, force_not_quantize=False):
+    def differentiable_decode_first_stage(self, z, predict_cids=False, force_not_quantize=False, module_name="first_stage_model"):
+        module = getattr(self, module_name)
         if predict_cids:
             if z.dim() == 4:
                 z = torch.argmax(z.exp(), dim=1).long()
-            z = self.first_stage_model.quantize.get_codebook_entry(z, shape=None)
+            z = module.quantize.get_codebook_entry(z, shape=None)
             z = rearrange(z, 'b h w c -> b c h w').contiguous()
 
         z = 1. / self.scale_factor * z
@@ -847,13 +902,13 @@ class LatentDiffusion(DDPM):
                 z = z.view((z.shape[0], -1, ks[0], ks[1], z.shape[-1]))  # (bn, nc, ks[0], ks[1], L )
 
                 # 2. apply model loop over last dim
-                if isinstance(self.first_stage_model, VQModelInterface):  
-                    output_list = [self.first_stage_model.decode(z[:, :, :, :, i],
+                if isinstance(module, VQModelInterface):  
+                    output_list = [module.decode(z[:, :, :, :, i],
                                                                  force_not_quantize=predict_cids or force_not_quantize)
                                    for i in range(z.shape[-1])]
                 else:
 
-                    output_list = [self.first_stage_model.decode(z[:, :, :, :, i])
+                    output_list = [module.decode(z[:, :, :, :, i])
                                    for i in range(z.shape[-1])]
 
                 o = torch.stack(output_list, axis=-1)  # # (bn, nc, ks[0], ks[1], L)
@@ -865,19 +920,20 @@ class LatentDiffusion(DDPM):
                 decoded = decoded / normalization  # norm is shape (1, 1, h, w)
                 return decoded
             else:
-                if isinstance(self.first_stage_model, VQModelInterface):
-                    return self.first_stage_model.decode(z, force_not_quantize=predict_cids or force_not_quantize)
+                if isinstance(module, VQModelInterface):
+                    return module.decode(z, force_not_quantize=predict_cids or force_not_quantize)
                 else:
-                    return self.first_stage_model.decode(z)
+                    return module.decode(z)
 
         else:
-            if isinstance(self.first_stage_model, VQModelInterface):
-                return self.first_stage_model.decode(z, force_not_quantize=predict_cids or force_not_quantize)
+            if isinstance(module, VQModelInterface):
+                return module.decode(z, force_not_quantize=predict_cids or force_not_quantize)
             else:
-                return self.first_stage_model.decode(z)
+                return module.decode(z)
 
     @torch.no_grad()
-    def encode_first_stage(self, x):
+    def encode_first_stage(self, x, module_name="first_stage_model"):
+        module = getattr(self, module_name)
         if hasattr(self, "split_input_params"):
             if self.split_input_params["patch_distributed_vq"]:
                 ks = self.split_input_params["ks"]  # eg. (128, 128)
@@ -898,7 +954,7 @@ class LatentDiffusion(DDPM):
                 # Reshape to img shape
                 z = z.view((z.shape[0], -1, ks[0], ks[1], z.shape[-1]))  # (bn, nc, ks[0], ks[1], L )
 
-                output_list = [self.first_stage_model.encode(z[:, :, :, :, i])
+                output_list = [module.encode(z[:, :, :, :, i])
                                for i in range(z.shape[-1])]
 
                 o = torch.stack(output_list, axis=-1)
@@ -912,13 +968,44 @@ class LatentDiffusion(DDPM):
                 return decoded
 
             else:
-                return self.first_stage_model.encode(x)
+                return module.encode(x)
         else:
-            return self.first_stage_model.encode(x)
+            return module.encode(x)
+        
+    def encode_all_stages(self, image_gt, image_inpaint, image_mask, range_gt, range_inpaint, range_mask):
+        z_image, z_lidar = None, None
+
+        if self.first_stage_model is not None:
+            encoder_posterior = self.encode_first_stage(image_gt)
+            # B x 4 x 64 x 64
+            z = self.get_first_stage_encoding(encoder_posterior).detach()
+            # pad with zeros -> B x 8 x 64 x 64
+            z = torch.cat((z, torch.zeros_like(z)), dim=1)
+
+            encoder_posterior_inpaint = self.encode_first_stage(image_inpaint)
+            z_inpaint = self.get_first_stage_encoding(encoder_posterior_inpaint).detach()
+            z_inpaint = torch.cat((z_inpaint, torch.zeros_like(z_inpaint)), dim=1)
+
+            mask_resize = Resize([z.shape[-1], z.shape[-1]])(image_mask)
+            z_image = torch.cat((z, z_inpaint, mask_resize), dim=1)
+        
+
+        if self.lidar_stage_model is not None:
+            encoder_posterior = self.encode_first_stage(range_gt, module_name="lidar_stage_model")
+            # B x 8 x 16 x 128
+            z = self.get_first_stage_encoding(encoder_posterior).detach()
+
+            encoder_posterior_inpaint = self.encode_first_stage(range_inpaint, module_name="lidar_stage_model")
+            z_inpaint = self.get_first_stage_encoding(encoder_posterior_inpaint).detach()
+
+            mask_resize = Resize([z.shape[-2], z.shape[-1]])(range_mask)
+            z_lidar = torch.cat((z, z_inpaint, mask_resize), dim=1)
+
+        return z_image, z_lidar
 
     def shared_step(self, batch, **kwargs):
-        x, c = self.get_input(batch, self.first_stage_key)
-        loss = self(x, c)
+        data = self.get_input(batch, self.first_stage_key)
+        loss = self(data["z"], data["cond"])
         return loss
 
     def forward(self, x, c, *args, **kwargs):
@@ -941,18 +1028,7 @@ class LatentDiffusion(DDPM):
 
         return self.p_losses(x, c, t, *args, **kwargs)
 
-    def _rescale_annotations(self, bboxes, crop_coordinates):  # TODO: move to dataset
-        def rescale_bbox(bbox):
-            x0 = clamp((bbox[0] - crop_coordinates[0]) / crop_coordinates[2])
-            y0 = clamp((bbox[1] - crop_coordinates[1]) / crop_coordinates[3])
-            w = min(bbox[2] / crop_coordinates[2], 1 - x0)
-            h = min(bbox[3] / crop_coordinates[3], 1 - y0)
-            return x0, y0, w, h
-
-        return [rescale_bbox(b) for b in bboxes]
-
     def apply_model(self, x_noisy, t, cond, return_ids=False):
-
         if isinstance(cond, dict):
             # hybrid case, cond is exptected to be a dict
             pass
@@ -963,6 +1039,7 @@ class LatentDiffusion(DDPM):
             cond = {key: cond}
 
         if hasattr(self, "split_input_params"):
+            raise NotImplementedError
             assert len(cond) == 1  # todo can only deal with one conditioning atm
             assert not return_ids  
             ks = self.split_input_params["ks"]  # eg. (128, 128)
@@ -1028,7 +1105,7 @@ class LatentDiffusion(DDPM):
                 cond_list = [{'c_crossattn': [e]} for e in adapted_cond]
 
             else:
-                cond_list = [cond for i in range(z.shape[-1])]  # Todo make this more efficient
+                cond_list = [cond for _ in range(z.shape[-1])]  # Todo make this more efficient
 
             # apply model by loop over crops
             output_list = [self.model(z_list[i], t, **cond_list[i]) for i in range(z.shape[-1])]
@@ -1071,9 +1148,9 @@ class LatentDiffusion(DDPM):
     def p_losses(self, x_start, cond, t, noise=None, ):
         if self.first_stage_key == 'inpaint':
             # x_start=x_start[:,:4,:,:]
-            noise = default(noise, lambda: torch.randn_like(x_start[:,:4,:,:]))
-            x_noisy = self.q_sample(x_start=x_start[:,:4,:,:], t=t, noise=noise)
-            x_noisy = torch.cat((x_noisy,x_start[:,4:,:,:]),dim=1)
+            noise = default(noise, lambda: torch.randn_like(x_start[:,:8,:,:]))
+            x_noisy = self.q_sample(x_start=x_start[:,:8,:,:], t=t, noise=noise)
+            x_noisy = torch.cat((x_noisy,x_start[:,8:,:,:]),dim=1)
         else:
             noise = default(noise, lambda: torch.randn_like(x_start))
             x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
@@ -1165,8 +1242,6 @@ class LatentDiffusion(DDPM):
         # no noise when t == 0
         nonzero_mask = (1 - (t == 0).float()).reshape(b, *((1,) * (len(x.shape) - 1)))
 
-        if return_codebook_ids:
-            return model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise, logits.argmax(dim=1)
         if return_x0:
             return model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise, x0
         else:
@@ -1314,133 +1389,56 @@ class LatentDiffusion(DDPM):
 
 
     @torch.no_grad()
-    def log_images(self, batch, N=4, n_row=4, sample=True, ddim_steps=50, ddim_eta=1., return_keys=None,
-                   quantize_denoised=True, inpaint=False, plot_denoise_rows=False, plot_progressive_rows=False,
-                   plot_diffusion_rows=True, **kwargs):
-
-        use_ddim = ddim_steps is not None
+    def log_images(self, batch, N=4, ddim_steps=50, ddim_eta=1., **kwargs):
+        data = self.get_input(
+            batch,
+            self.first_stage_key,
+            return_first_stage_outputs=True,
+            force_c_encode=True,
+            return_original_cond=True,
+            get_mask=True,
+            get_reference=True,
+            bs=N
+        )
 
         log = dict()
 
-        z, c, x, xrec, xc, mask, reference = self.get_input(batch, self.first_stage_key,
-                                        return_first_stage_outputs=True,
-                                        force_c_encode=True,
-                                        return_original_cond=True,
-                                        get_mask=True,
-                                        get_reference=True,
-                                        bs=N)
-        N = min(x.shape[0], N)
-        n_row = min(x.shape[0], n_row)
-        log["inputs"] = x
-        log["vae_reconstruction"] = xrec
-        log["mask"]=mask
-        log["reference"]=reference
-        if self.model.conditioning_key is not None:
-            if hasattr(self.cond_stage_model, "decode"):
-                xc = self.cond_stage_model.decode(c)
-                log["conditioning"] = xc
-            elif self.cond_stage_key in ["caption","txt"]:
-                xc = log_txt_as_img((x.shape[2], x.shape[3]), batch[self.cond_stage_key])
-                log["conditioning"] = xc
-            elif self.cond_stage_key == 'class_label':
-                xc = log_txt_as_img((x.shape[2], x.shape[3]), batch["human_label"])
-                log['conditioning'] = xc
-            elif isimage(xc):
-                log["conditioning"] = xc
-            if ismap(xc):
-                log["original_conditioning"] = self.to_rgb(xc)
+        with self.ema_scope("Plotting"):
+            if self.first_stage_key=='inpaint':
+                samples, _ = self.sample_log(
+                    cond=data["cond"],batch_size=data['z'].shape[0],ddim=(ddim_steps is not None),
+                    ddim_steps=ddim_steps,eta=ddim_eta,rest=data['z'][:,8:,:,:]
+                )        
 
-        if plot_diffusion_rows:
-            # get diffusion row
-            diffusion_row = list()
-            z_start = z[:n_row]
-            for t in range(self.num_timesteps):
-                if t % self.log_every_t == 0 or t == self.num_timesteps - 1:
-                    t = repeat(torch.tensor([t]), '1 -> b', b=n_row)
-                    t = t.to(self.device).long()
-                    noise = torch.randn_like(z_start)
-                    z_noisy = self.q_sample(x_start=z_start, t=t, noise=noise)
-                    diffusion_row.append(self.decode_first_stage(z_noisy))
+        # Image
+        if "image" in data:
+            log["image_rec"] = data["image"]["gt_rec"]
 
-            diffusion_row = torch.stack(diffusion_row)  # n_log_step, n_row, C, H, W
-            diffusion_grid = rearrange(diffusion_row, 'n b c h w -> b n c h w')
-            diffusion_grid = rearrange(diffusion_grid, 'b n c h w -> (b n) c h w')
-            diffusion_grid = make_grid(diffusion_grid, nrow=diffusion_row.shape[0])
-            log["diffusion_row"] = diffusion_grid
+            image_sample = self.decode_first_stage(samples)
 
-        if sample:
-            # get denoise row
-            with self.ema_scope("Plotting"):
-                if self.first_stage_key=='inpaint':
-                    samples, z_denoise_row = self.sample_log(cond=c,batch_size=N,ddim=use_ddim,
-                                                            ddim_steps=ddim_steps,eta=ddim_eta,rest=z[:,4:,:,:])
-                else:
-                    samples, z_denoise_row = self.sample_log(cond=c,batch_size=N,ddim=use_ddim,
-                                                            ddim_steps=ddim_steps,eta=ddim_eta)                
-                # samples, z_denoise_row = self.sample(cond=c, batch_size=N, return_intermediates=True)
-            x_samples = self.decode_first_stage(samples)
-            log["samples"] = x_samples
-            if plot_denoise_rows:
-                denoise_grid = self._get_denoise_row_from_list(z_denoise_row)
-                log["denoise_row"] = denoise_grid
-
-            if quantize_denoised and not isinstance(self.first_stage_model, AutoencoderKL) and not isinstance(
-                    self.first_stage_model, IdentityFirstStage):
-                # also display when quantizing x0 while sampling
-                with self.ema_scope("Plotting Quantized Denoised"):
-                    samples, z_denoise_row = self.sample_log(cond=c,batch_size=N,ddim=use_ddim,
-                                                             ddim_steps=ddim_steps,eta=ddim_eta,
-                                                             quantize_denoised=True)
-                    # samples, z_denoise_row = self.sample(cond=c, batch_size=N, return_intermediates=True,
-                    #                                      quantize_denoised=True)
-                x_samples = self.decode_first_stage(samples.to(self.device))
-                log["samples_x0_quantized"] = x_samples
-
-            if inpaint:
-                # make a simple center square
-                b, h, w = z.shape[0], z.shape[2], z.shape[3]
-                mask = torch.ones(N, h, w).to(self.device)
-                # zeros will be filled in
-                mask[:, h // 4:3 * h // 4, w // 4:3 * w // 4] = 0.
-                mask = mask[:, None, ...]
-                with self.ema_scope("Plotting Inpaint"):
-
-                    samples, _ = self.sample_log(cond=c,batch_size=N,ddim=use_ddim, eta=ddim_eta,
-                                                ddim_steps=ddim_steps, x0=z[:N,:4], mask=mask)
-                x_samples = self.decode_first_stage(samples.to(self.device))
-                log["samples_inpainting"] = x_samples
-                log["mask"] = mask
-
-                # outpaint
-                with self.ema_scope("Plotting Outpaint"):
-                    samples, _ = self.sample_log(cond=c, batch_size=N, ddim=use_ddim,eta=ddim_eta,
-                                                ddim_steps=ddim_steps, x0=z[:N], mask=mask)
-                x_samples = self.decode_first_stage(samples.to(self.device))
-                log["samples_outpainting"] = x_samples
-
-        if plot_progressive_rows:
-            with self.ema_scope("Plotting Progressives"):
-                img, progressives = self.progressive_denoising(c,
-                                                               shape=(self.channels, self.image_size, self.image_size),
-                                                               batch_size=N)
-            prog_row = self._get_denoise_row_from_list(progressives, desc="Progressive Generation")
-            log["progressive_row"] = prog_row
-
-        if "reference" in log and "mask" in log and "samples" in log and "inputs" in log:
             new_size = (224, 224)
-            reference = log["reference"]
-            mask = F.interpolate(log["mask"], size=new_size, mode='bilinear').repeat(1, 3, 1, 1)
+            reference = data['image']["ref_image"]
+            mask = F.interpolate(data["image"]["mask"], size=new_size, mode='bilinear').repeat(1, 3, 1, 1)
             samples = F.interpolate(log["samples"], size=new_size, mode='bilinear')
             inputs = F.interpolate(log["inputs"], size=new_size, mode='bilinear')
             
-            log["samples"] = torch.cat([inputs, reference, mask, samples], dim=-2)
-            del log["reference"], log["mask"], log["inputs"]
+            log["image_samples"] = torch.cat([inputs, reference, mask, samples], dim=-2)
 
-        if return_keys:
-            if np.intersect1d(list(log.keys()), return_keys).shape[0] == 0:
-                return log
-            else:
-                return {key: log[key] for key in return_keys}
+        # Lidar
+        if "lidar" in data:
+            log["lidar_rec"] = data["lidar"]["gt_rec"]
+
+            samples = F.interpolate(samples, size=self.lidar_latent_shape, mode='bilinear')
+            lidar_samples = self.decode_first_stage(samples, module_name="lidar_stage_model")
+
+            new_size = (512, 64)
+            reference = data['lidar']["ref_image"]
+            mask = F.interpolate(data["lidar"]["mask"], size=new_size, mode='bilinear').repeat(1, 3, 1, 1)
+            samples = F.interpolate(log["samples"], size=new_size, mode='bilinear')
+            inputs = F.interpolate(log["inputs"], size=new_size, mode='bilinear')
+            
+            log["lidar_samples"] = torch.cat([inputs, reference, mask, samples], dim=-2)
+
         return log
 
     def configure_optimizers(self):
@@ -1506,7 +1504,7 @@ class DiffusionWrapper(pl.LightningModule):
         self.diffusion_model = instantiate_from_config(diff_model_config).eval()
 
         for name, param in self.diffusion_model.named_parameters():
-            if "multiview" in name:
+            if "multiview" in name or "lidar" in name:
                 param.requires_grad = True
             else:
                 param.requires_grad = False
@@ -1535,81 +1533,3 @@ class DiffusionWrapper(pl.LightningModule):
 
         return out
 
-
-class Layout2ImgDiffusion(LatentDiffusion):
-    # TODO: move all layout-specific hacks to this class
-    def __init__(self, cond_stage_key, *args, **kwargs):
-        assert cond_stage_key == 'coordinates_bbox', 'Layout2ImgDiffusion only for cond_stage_key="coordinates_bbox"'
-        super().__init__(cond_stage_key=cond_stage_key, *args, **kwargs)
-
-    def log_images(self, batch, N=8, *args, **kwargs):
-        logs = super().log_images(batch=batch, N=N, *args, **kwargs)
-
-        key = 'train' if self.training else 'validation'
-        dset = self.trainer.datamodule.datasets[key]
-        mapper = dset.conditional_builders[self.cond_stage_key]
-
-        bbox_imgs = []
-        map_fn = lambda catno: dset.get_textual_label(dset.get_category_id(catno))
-        for tknzd_bbox in batch[self.cond_stage_key][:N]:
-            bboximg = mapper.plot(tknzd_bbox.detach().cpu(), map_fn, (256, 256))
-            bbox_imgs.append(bboximg)
-
-        cond_img = torch.stack(bbox_imgs, dim=0)
-        logs['bbox_image'] = cond_img
-        return logs
-
-class LatentInpaintDiffusion(LatentDiffusion):
-    def __init__(
-        self,
-        concat_keys=("mask", "masked_image"),
-        masked_image_key="masked_image",
-        finetune_keys=None,
-        *args,
-        **kwargs,
-    ):
-        super().__init__(*args, **kwargs)
-        self.masked_image_key = masked_image_key
-        assert self.masked_image_key in concat_keys
-        self.concat_keys = concat_keys
-
-
-    @torch.no_grad()
-    def get_input(
-        self, batch, k, cond_key=None, bs=None, return_first_stage_outputs=False
-    ):
-        # note: restricted to non-trainable encoders currently
-        assert (
-            not self.cond_stage_trainable
-        ), "trainable cond stages not yet supported for inpainting"
-        z, c, x, xrec, xc = super().get_input(
-            batch,
-            self.first_stage_key,
-            return_first_stage_outputs=True,
-            force_c_encode=True,
-            return_original_cond=True,
-            bs=bs,
-        )
-
-        assert exists(self.concat_keys)
-        c_cat = list()
-        for ck in self.concat_keys:
-            cc = (
-                rearrange(batch[ck], "b h w c -> b c h w")
-                .to(memory_format=torch.contiguous_format)
-                .float()
-            )
-            if bs is not None:
-                cc = cc[:bs]
-                cc = cc.to(self.device)
-            bchw = z.shape
-            if ck != self.masked_image_key:
-                cc = torch.nn.functional.interpolate(cc, size=bchw[-2:])
-            else:
-                cc = self.get_first_stage_encoding(self.encode_first_stage(cc))
-            c_cat.append(cc)
-        c_cat = torch.cat(c_cat, dim=1)
-        all_conds = {"c_concat": [c_cat], "c_crossattn": [c]}
-        if return_first_stage_outputs:
-            return z, all_conds, x, xrec, xc
-        return z, all_conds
