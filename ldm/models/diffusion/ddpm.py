@@ -435,8 +435,8 @@ class DDPM(pl.LightningModule):
 class LatentDiffusion(DDPM):
     """main class"""
     def __init__(self,
-                 first_stage_config,
                  cond_stage_config,
+                 first_stage_config=None,
                  lidar_stage_config=None,
                  num_timesteps_cond=None,
                  cond_stage_key="image",
@@ -734,7 +734,7 @@ class LatentDiffusion(DDPM):
 
     @torch.no_grad()
     def get_input(self, batch, k, return_first_stage_outputs=False, force_c_encode=False,
-                  cond_key=None, return_original_cond=False, bs=None,get_mask=False,get_reference=False):
+                  return_original_cond=False, bs=None,get_mask=False,get_reference=False):
         
         image_data, lidar_data = super().get_input(batch, k)
 
@@ -763,7 +763,7 @@ class LatentDiffusion(DDPM):
             "cond": [],
         }
         if self.first_stage_model is not None:
-            c, xc = self.process_conditioning(image_data["cond"])
+            c, xc = self.process_conditioning(image_data["cond"], force_c_encode=force_c_encode)
             out["z"].append(z_image)
             out["cond"].append(c)
 
@@ -779,11 +779,11 @@ class LatentDiffusion(DDPM):
                 )
 
         if self.lidar_stage_model is not None:
-            c, xc = self.process_conditioning(lidar_data["cond"])
+            c, xc = self.process_conditioning(lidar_data["cond"], force_c_encode=force_c_encode)
             # resize lidar feature map
             self.lidar_latent_shape = z_lidar.shape[-2:]
             out["z"].append(
-                F.interpolate(z_lidar, size=z_image.shape[-2:], mode="bilinear")
+                F.interpolate(z_lidar, size=self.image_size, mode="bilinear")
             )
             out["cond"].append(c)
 
@@ -794,14 +794,18 @@ class LatentDiffusion(DDPM):
 
             if return_first_stage_outputs:
                 out["lidar"]["gt"] = lidar_data["range_depth"]
+                # z_lidar = F.interpolate(out["z"][-1], size=self.lidar_latent_shape, mode="bilinear")
                 out["lidar"]['gt_rec'] = self.decode_first_stage(
                     z_lidar[:, :8, ...], module_name="lidar_stage_model"
                 )
 
         out["z"] = cat_interleave(out["z"])
-        out["cond"] = {
-            k : cat_interleave([d[k] for d in out["cond"]]) for k in self.cond_stage_key
-        }
+        if force_c_encode:
+            out["cond"] = cat_interleave(out["cond"])
+        else:
+            out["cond"] = {
+                k : cat_interleave([d[k] for d in out["cond"]]) for k in self.cond_stage_key
+            }
 
         return out
         
@@ -1386,6 +1390,20 @@ class LatentDiffusion(DDPM):
                                                  return_intermediates=True,**kwargs)
 
         return samples, intermediates
+    
+    @torch.no_grad()
+    def decode_sample(self, sample):
+        h_camera, h_lidar = None, None
+
+        if self.first_stage_model is not None and self.lidar_stage_model is not None:
+            h_camera = sample[::2][:, :4, :, :]
+            h_lidar = F.interpolate(sample[1::2], self.lidar_latent_shape, mode='bilinear')
+        elif self.first_stage_model is not None:
+            h_camera = sample[:, :4, :, :]
+        else:
+            h_lidar = F.interpolate(sample, self.lidar_latent_shape, mode='bilinear')
+
+        return h_camera, h_lidar
 
 
     @torch.no_grad()
@@ -1408,36 +1426,41 @@ class LatentDiffusion(DDPM):
                 samples, _ = self.sample_log(
                     cond=data["cond"],batch_size=data['z'].shape[0],ddim=(ddim_steps is not None),
                     ddim_steps=ddim_steps,eta=ddim_eta,rest=data['z'][:,8:,:,:]
-                )        
+                )   
+                h_camera, h_lidar = self.decode_sample(samples)     
 
         # Image
         if "image" in data:
-            log["image_rec"] = data["image"]["gt_rec"]
-
-            image_sample = self.decode_first_stage(samples)
+            image_sample = self.decode_first_stage(h_camera)
 
             new_size = (224, 224)
             reference = data['image']["ref_image"]
             mask = F.interpolate(data["image"]["mask"], size=new_size, mode='bilinear').repeat(1, 3, 1, 1)
-            samples = F.interpolate(log["samples"], size=new_size, mode='bilinear')
-            inputs = F.interpolate(log["inputs"], size=new_size, mode='bilinear')
+            samples = F.interpolate(image_sample, size=new_size, mode='bilinear')
+            inputs = F.interpolate(data['image']['gt'], size=new_size, mode='bilinear')
+            rec = F.interpolate(data['image']['gt_rec'], size=new_size, mode='bilinear')
             
             log["image_samples"] = torch.cat([inputs, reference, mask, samples], dim=-2)
+            log["image_input-rec"] = torch.cat([inputs, rec], dim=-2)
 
         # Lidar
         if "lidar" in data:
-            log["lidar_rec"] = data["lidar"]["gt_rec"]
+            lidar_samples = self.decode_first_stage(h_lidar, module_name="lidar_stage_model")
 
-            samples = F.interpolate(samples, size=self.lidar_latent_shape, mode='bilinear')
-            lidar_samples = self.decode_first_stage(samples, module_name="lidar_stage_model")
-
-            new_size = (512, 64)
+            new_size = (64, 1024)
             reference = data['lidar']["ref_image"]
-            mask = F.interpolate(data["lidar"]["mask"], size=new_size, mode='bilinear').repeat(1, 3, 1, 1)
-            samples = F.interpolate(log["samples"], size=new_size, mode='bilinear')
-            inputs = F.interpolate(log["inputs"], size=new_size, mode='bilinear')
+            mask = F.interpolate(data["lidar"]["mask"][:, [0]], size=new_size, mode='bilinear')
+            samples = F.interpolate(lidar_samples, size=new_size, mode='bilinear')
+            inputs = F.interpolate(data["lidar"]["gt"], size=new_size, mode='bilinear')
+            rec = F.interpolate(data["lidar"]["gt_rec"], size=new_size, mode='bilinear')
             
-            log["lidar_samples"] = torch.cat([inputs, reference, mask, samples], dim=-2)
+            log["lidar_samples"] = torch.cat([inputs, mask, samples], dim=-2)
+            log["lidar_input-rec"] = torch.cat([inputs, rec], dim=-2)
+
+            # For computing metrics
+            log["lidar_samples"] = lidar_samples
+            log["lidar_gt"] = data["lidar"]["gt"]
+            log["lidar_mask"] = data["lidar"]["mask"]
 
         return log
 

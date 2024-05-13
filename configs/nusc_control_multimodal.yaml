@@ -13,7 +13,7 @@ model:
       - "ref_bbox"
       - "ref_label"
     image_size: 64
-    channels: 4
+    channels: 8
     cond_stage_trainable: true   # Note: different from the one we trained before
     conditioning_key: crossattn
     monitor: val/loss_simple_ema
