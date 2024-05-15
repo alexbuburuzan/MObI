@@ -1502,7 +1502,7 @@ class LatentDiffusion(DDPM):
         param_names = []
 
         for name, param in self.model.named_parameters():
-            if "multiview" in name:
+            if "multiview" in name or "lidar" in name:
                 params.append(param)
                 param_names.append(name)
                 assert param.requires_grad, f"{name} requires grad is False"
