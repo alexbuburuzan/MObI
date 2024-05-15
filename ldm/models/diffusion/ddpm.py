@@ -1421,7 +1421,7 @@ class LatentDiffusion(DDPM):
         elif self.use_camera:
             h_camera = sample[:, :4, :, :]
         else:
-            h_lidar = F.interpolate(sample[1::2], size=(z_lidar.shape[-2], self.image_size), mode='bilinear')
+            h_lidar = F.interpolate(sample, size=(z_lidar.shape[-2], self.image_size), mode='bilinear')
             z_lidar[..., z_lidar.shape[-1]//2 - self.image_size//2 :z_lidar.shape[-1]//2 + self.image_size//2] = h_lidar
             h_lidar = z_lidar
 
