@@ -5,6 +5,7 @@ https://github.com/openai/improved-diffusion/blob/e94489283bb876ac1477d5dd7709bb
 https://github.com/CompVis/taming-transformers
 -- merci
 """
+import warnings
 
 import torch
 import torch.nn as nn
@@ -446,6 +447,8 @@ class LatentDiffusion(DDPM):
                  conditioning_key=None,
                  scale_factor=1.0,
                  scale_by_std=False,
+                 use_camera=True,
+                 use_lidar=False,
                  *args, **kwargs):
         self.num_timesteps_cond = default(num_timesteps_cond, 1)
         self.scale_by_std = scale_by_std
@@ -475,6 +478,15 @@ class LatentDiffusion(DDPM):
             self.scale_factor = scale_factor
         else:
             self.register_buffer('scale_factor', torch.tensor(scale_factor))
+
+        self.use_camera = use_camera
+        self.use_lidar = use_lidar
+        if self.use_camera is False and first_stage_config is not None:
+            warnings.warn("No camera input, but first_stage_config is not None. Setting first_stage_config to None.")
+            first_stage_config = None
+        if self.use_lidar is False and lidar_stage_config is not None:
+            warnings.warn("No lidar input, but lidar_stage_config is not None. Setting lidar_stage_config to None.")
+            lidar_stage_config = None
 
         self.instantiate_first_stage(first_stage_config)
         self.instantiate_cond_stage(cond_stage_config)
@@ -735,7 +747,7 @@ class LatentDiffusion(DDPM):
 
     @torch.no_grad()
     def get_input(self, batch, k, return_first_stage_outputs=False, force_c_encode=False,
-                  return_original_cond=False, bs=None,get_mask=False,get_reference=False):
+                  bs=None,get_mask=False,get_reference=False):
         
         image_data, lidar_data = super().get_input(batch, k)
 
@@ -764,13 +776,12 @@ class LatentDiffusion(DDPM):
             "cond": [],
             "bbox_3d": batch.get("bbox_3d"),
         }
-        if self.first_stage_model is not None:
-            c, xc = self.process_conditioning(image_data["cond"], force_c_encode=force_c_encode)
+        if self.use_camera:
             out["z"].append(z_image)
+            c, _ = self.process_conditioning(image_data["cond"], force_c_encode=force_c_encode)
             out["cond"].append(c)
 
             out["image"] = {}
-            if return_original_cond: out["image"]["orig_cond"] = xc
             if get_mask: out["image"]["mask"] = image_data["inpaint_mask"]
             if get_reference: out["image"]["ref_image"] = image_data["cond"]["ref_image"]
 
@@ -780,21 +791,20 @@ class LatentDiffusion(DDPM):
                     z_image[:, :4, ...]
                 )
 
-        if self.lidar_stage_model is not None:
-            c, xc = self.process_conditioning(lidar_data["cond"], force_c_encode=force_c_encode)
-            # resize lidar feature map
+        if self.use_lidar:
+            # crop and resize lidar feature map
+            W = z_lidar.shape[-1]
+            left, right = W // 2 - self.image_size // 2, W // 2 + self.image_size // 2
             out["z"].append(
-                F.interpolate(
-                    z_lidar[..., z_lidar.shape[-1]//2 - self.image_size//2 :z_lidar.shape[-1]//2 + self.image_size//2],
-                    size=self.image_size,
-                    mode="bilinear"
-                )
+                F.interpolate(z_lidar[..., left:right], size=self.image_size, mode="bilinear")
             )
+            # Align bbox with cropped lidar feature map
+            lidar_data["cond"]["ref_bbox"][..., 0] = (lidar_data["cond"]["ref_bbox"][..., 0] * W - left) / self.image_size
+            c, _ = self.process_conditioning(lidar_data["cond"], force_c_encode=force_c_encode)
             out["cond"].append(c)
             out["z_lidar"] = z_lidar[:, :8, ...]
 
             out["lidar"] = {}
-            if return_original_cond: out["lidar"]["orig_cond"] = xc
             if get_mask:
                 out["lidar"]["mask"] = lidar_data["range_mask"]
                 out["lidar"]["instance_mask"] = lidar_data["range_instance_mask"]
@@ -987,7 +997,7 @@ class LatentDiffusion(DDPM):
     def encode_all_stages(self, image_gt, image_inpaint, image_mask, range_gt, range_inpaint, range_mask):
         z_image, z_lidar = None, None
 
-        if self.first_stage_model is not None:
+        if self.use_camera:
             encoder_posterior = self.encode_first_stage(image_gt)
             # B x 4 x 64 x 64
             z = self.get_first_stage_encoding(encoder_posterior).detach()
@@ -1002,7 +1012,7 @@ class LatentDiffusion(DDPM):
             z_image = torch.cat((z, z_inpaint, mask_resize), dim=1)
         
 
-        if self.lidar_stage_model is not None:
+        if self.use_lidar:
             encoder_posterior = self.encode_first_stage(range_gt, module_name="lidar_stage_model")
             # B x 8 x 16 x 128
             z = self.get_first_stage_encoding(encoder_posterior).detach()
@@ -1403,12 +1413,12 @@ class LatentDiffusion(DDPM):
     def decode_sample(self, sample, z_lidar=None):
         h_camera, h_lidar = None, None
 
-        if self.first_stage_model is not None and self.lidar_stage_model is not None:
+        if self.use_camera and self.use_lidar:
             h_camera = sample[::2][:, :4, :, :]
             h_lidar = F.interpolate(sample[1::2], size=(z_lidar.shape[-2], self.image_size), mode='bilinear')
             z_lidar[..., z_lidar.shape[-1]//2 - self.image_size//2 :z_lidar.shape[-1]//2 + self.image_size//2] = h_lidar
             h_lidar = z_lidar
-        elif self.first_stage_model is not None:
+        elif self.use_camera:
             h_camera = sample[:, :4, :, :]
         else:
             h_lidar = F.interpolate(sample[1::2], size=(z_lidar.shape[-2], self.image_size), mode='bilinear')
@@ -1425,7 +1435,6 @@ class LatentDiffusion(DDPM):
             self.first_stage_key,
             return_first_stage_outputs=True,
             force_c_encode=True,
-            return_original_cond=True,
             get_mask=True,
             get_reference=True,
             bs=N
@@ -1443,12 +1452,12 @@ class LatentDiffusion(DDPM):
 
         # Image
         if "image" in data:
-            image_sample = self.decode_first_stage(h_camera)
+            image_samples = self.decode_first_stage(h_camera)
 
             new_size = (224, 224)
             reference = data['image']["ref_image"]
             mask = F.interpolate(data["image"]["mask"], size=new_size, mode='bilinear').repeat(1, 3, 1, 1)
-            samples = F.interpolate(image_sample, size=new_size, mode='bilinear')
+            samples = F.interpolate(image_samples, size=new_size, mode='bilinear')
             inputs = F.interpolate(data['image']['gt'], size=new_size, mode='bilinear')
             rec = F.interpolate(data['image']['gt_rec'], size=new_size, mode='bilinear')
             
