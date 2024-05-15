@@ -362,6 +362,7 @@ class LidarConverter:
         range_depth=None,
         range_int=None,
         width=1024,
+        random_crop=False,
         crop_left=None,
     ):
         """
@@ -385,7 +386,10 @@ class LidarConverter:
 
         center_x = int(np.mean(bbox_range_coords[:, 0]))
         if crop_left is None:
-            d_left = random.randint(width // 4, width - width // 4)
+            if random_crop:
+                d_left = random.randint(width // 4, width - width // 4)
+            else:
+                d_left = width // 2
         else:
             d_left = center_x - crop_left
         d_right = width - d_left

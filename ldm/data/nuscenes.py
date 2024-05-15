@@ -1,8 +1,11 @@
+import warnings
+
 import pickle
 import random
 import numpy as np
 import pandas as pd
 from PIL import Image
+import torch
 
 import torchvision.transforms as T
 import torch.utils.data as data
@@ -161,7 +164,7 @@ class NuScenesDataset(data.Dataset):
 
         # Lidar
         if self.use_lidar:
-            data["lidar"] = self.get_range_data(scene_info, bbox_3d)
+            data["lidar"] = self.get_range_data(scene_info, bbox_3d, object_meta["scene_obj_idx"])
             data["lidar"]["cond"]["ref_image"] = ref_image
             data["lidar"]["cond"]["ref_label"] = ref_label
 
@@ -231,12 +234,18 @@ class NuScenesDataset(data.Dataset):
 
         return id_name
     
-    def get_range_data(self, scene_info, bbox_3d):
+    def get_range_data(self, scene_info, bbox_3d, obj_idx):
         lidar_converter = LidarConverter()
 
         if "range_depth_path" in scene_info and "range_intensity_path" in scene_info:
             range_depth = np.load(scene_info["range_depth_path"])
             range_int = np.load(scene_info["range_intensity_path"])
+
+            if "range_instance_mask_path" in scene_info:
+                range_instance_mask = (np.load(scene_info["range_instance_mask_path"]) == obj_idx)
+            else:
+                range_instance_mask = np.zeros_like(range_depth)
+                warnings.warn("No instance mask found")
         elif "lidar_path" in scene_info:
             lidar_scan = np.load(scene_info["lidar_path"])
             points = lidar_scan[:, :3].astype(np.float32)
@@ -246,8 +255,6 @@ class NuScenesDataset(data.Dataset):
         
         # Get range coords of the bbox
         bbox_range_coords = lidar_converter.get_range_coords(bbox_3d)
-
-        range_depth_orig = range_depth.copy()
 
         # Preprocess range data
         range_depth, range_int, bbox_range_coords, range_shift_left = lidar_converter.apply_default_transforms(
@@ -272,6 +279,8 @@ class NuScenesDataset(data.Dataset):
             bbox_3d, self.range_height, self.range_width, self.expand_mask_ratio, range_shift_left,
         )
         range_mask = range_mask.unsqueeze(0)
+        range_instance_mask = np.roll(range_instance_mask, -range_shift_left, axis=-1)
+        range_instance_mask = torch.tensor(range_instance_mask).float().unsqueeze(0)
 
         # Inpainted range
         range_depth_inpaint = range_depth.clone() * range_mask
@@ -284,7 +293,7 @@ class NuScenesDataset(data.Dataset):
             "range_depth_inpaint": range_depth_inpaint,
             "range_int_inpaint": range_int_inpaint,
             "range_shift_left": range_shift_left,
-            "range_depth_orig": range_depth_orig,
+            "range_instance_mask": range_instance_mask,
             "cond": {
                 "ref_bbox": bbox_range_coords,
             }
