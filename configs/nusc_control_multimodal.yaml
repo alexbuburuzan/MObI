@@ -18,6 +18,7 @@ model:
     conditioning_key: crossattn
     monitor: val/loss_simple_ema
     u_cond_percent: 0.2
+    scale_factor: 0.18215
     use_ema: False
 
     scheduler_config: # 10000 warmup steps
@@ -58,7 +59,7 @@ model:
         ddconfig:
           double_z: true
           z_channels: 4
-          resolution: 128
+          resolution: 256
           in_channels: 3
           out_ch: 3
           ch: 128
@@ -111,6 +112,7 @@ data:
           params:
               state: train
               use_lidar: True
+              use_camera: True
               object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_train.csv
               scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_train.pkl
               expand_mask_ratio: 0.1
@@ -139,6 +141,7 @@ data:
           params:
               state: val
               use_lidar: True
+              use_camera: True
               object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.csv
               scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
               expand_mask_ratio: 0.1
@@ -167,6 +170,7 @@ data:
           params:
               state: test
               use_lidar: True
+              use_camera: True
               object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.csv
               scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
               expand_mask_ratio: 0.1
@@ -194,6 +198,8 @@ data:
           target: ldm.data.nuscenes.NuScenesDataset
           params:
               state: test
+              use_lidar: True
+              use_camera: True
               object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.csv
               scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
               expand_mask_ratio: 0.1
