@@ -233,9 +233,9 @@ def main():
         help="insert object for rotated bbox",
     )
     parser.add_argument(
-        "--compute_cd",
+        "--compute_metrics",
         action="store_true",
-        help="compute Chamfer Distance",
+        help="compute metrics",
     )
     opt = parser.parse_args()
 
@@ -275,7 +275,7 @@ def main():
     if opt.rotation_test:
         test_data_config = config.data.params.rotation_test
         test_dataset = instantiate_from_config(test_data_config)
-    elif opt.compute_cd:
+    elif opt.compute_metrics:
         test_data_config = config.data.params.validation
         test_dataset = instantiate_from_config(test_data_config)
     else:
@@ -324,10 +324,7 @@ def main():
         drop_last=True
     )
 
-    metrics = {
-        "object_CD": {c: [] for c in test_data_config['params']['object_classes']},
-        "global_CD": {c: [] for c in test_data_config['params']['object_classes']},
-    }
+    metrics = {}
 
     start_code = None
     if opt.fixed_code:
@@ -392,6 +389,12 @@ def main():
                             cv2.imwrite(os.path.join(lidar_path, 'grid-' + segment_id_batch[i] + '_lidar.png'), pred_grid[i])
                             cv2.imwrite(os.path.join(lidar_path, 'grid-' + segment_id_batch[i] + '_lidar_rec.png'), rec_grid[i])
 
+                        if opt.compute_metrics:
+                            for k, v in lidar_metrics.items():
+                                if k not in metrics:
+                                    metrics[k] = []
+                                metrics[k].append(v.item())
+
                         # lidar_converter = LidarConverter()
                         # range_depth_new, _ = lidar_converter.undo_default_transforms(
                         #     crop_left,
@@ -405,7 +408,7 @@ def main():
                         # cv2.imwrite(os.path.join(lidar_path, segment_id_batch[i] + "_lidar.png"), lidar_vis[:, :, ::-1])
                         # cv2.imwrite(os.path.join(lidar_path, segment_id_batch[i] + "_lidar_new.png"), lidar_vis_new[:, :, ::-1])
 
-                        # if opt.compute_cd:
+                        # if opt.compute_metrics:
                         #     global_cd = pcu.chamfer_distance(points, points_new)
 
                         #     mask_points = points_in_bbox_corners(points, bbox_3d[None])
@@ -422,12 +425,14 @@ def main():
 
                         #     segment_id_batch[i] = segment_id_batch[i] + f"_CD_g{global_cd:.2f}_l{object_cd:.2f}"
 
-    for score_name in metrics:
-        for class_name in metrics[score_name]:
-            metrics[score_name][class_name] = np.mean(metrics[score_name][class_name])
+    # for score_name in metrics:
+    #     for class_name in metrics[score_name]:
+    #         metrics[score_name][class_name] = np.mean(metrics[score_name][class_name])
 
-    metrics_df = pd.DataFrame(metrics)
-    metrics_df.loc["average"] = metrics_df.mean()
+    for score_name in metrics:
+        metrics[score_name] = np.mean(metrics[score_name])
+
+    metrics_df = pd.DataFrame(metrics, index=["mean L1"])
     metrics_df.to_csv(os.path.join(outpath, "metrics.csv"))
 
     print(f"Your samples are ready and waiting for you here: \n{outpath} \n"
