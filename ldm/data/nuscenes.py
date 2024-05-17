@@ -182,12 +182,12 @@ class NuScenesDataset(data.Dataset):
         elif self.ref_mode == "same-ref":
             reference_meta = current_object_meta
         elif self.ref_mode == "random-ref":
-            reference_meta = self.all_objects_meta[
-                self.all_objects_meta["object_class"] == current_object_meta["object_class"]
+            reference_meta = self.objects_meta[
+                self.objects_meta["object_class"] == current_object_meta["object_class"]
             ].sample(1).iloc[0]
         elif self.ref_mode == "track-ref":
-            reference_meta = self.all_objects_meta[
-                self.all_objects_meta["track_id"] == current_object_meta["track_id"]
+            reference_meta = self.objects_meta[
+                self.objects_meta["track_id"] == current_object_meta["track_id"]
             ].sample(1).iloc[0]
         else:
             raise ValueError("Invalid ref_mode")

@@ -118,17 +118,6 @@ def move_to_device(batch, device):
         return batch
 
 
-def un_norm(x):
-    return (x + 1.0)/2.0
-
-def un_norm_clip(x):
-    x = Resize((256, 256))(x)
-    x[:,0] = x[:,0] * 0.26862954 + 0.48145466
-    x[:,1] = x[:,1] * 0.26130258 + 0.4578275
-    x[:,2] = x[:,2] * 0.27577711 + 0.40821073
-    return x
-
-
 def main():
     parser = argparse.ArgumentParser()
 
@@ -279,8 +268,8 @@ def main():
             data = list(chunk(data, batch_size))
 
     lidar_path = os.path.join(outpath, "lidar")
-    result_path = os.path.join(outpath, "results")
-    os.makedirs(result_path, exist_ok=True)
+    camera_path = os.path.join(outpath, "camera")
+    os.makedirs(camera_path, exist_ok=True)
     os.makedirs(lidar_path, exist_ok=True)
 
     if opt.rotation_test:
@@ -361,10 +350,8 @@ def main():
                     data = model.get_input(
                         batch,
                         model.first_stage_key,
-                        return_first_stage_outputs=True,
                         force_c_encode=True,
-                        get_mask=True,
-                        get_reference=True,
+                        return_vae_rec=True,
                     )
 
                     uc = None
@@ -390,86 +377,50 @@ def main():
                         inpaint_mask=data["z"][:,[16]]
                     )
 
-                    h_camera, h_lidar = model.decode_sample(samples, data["z_lidar"])
+                    h_camera, h_lidar = model.decode_sample(samples, data.get("z_lidar"))
+                    log, lidar_metrics = model.log_data(batch, data, h_camera, h_lidar, log_metrics=False)
 
-                    if "image" in data:
-                        image_samples = model.decode_first_stage(h_camera)
-
-                        def get_images(x, transform=None, bboxes=None):
-                            x = transform(x) if transform is not None else x
-                            x = x.cpu().numpy().transpose(0, 2, 3, 1)
-                            x = (x * 255).astype(np.uint8)[..., ::-1]
-                            if bboxes is not None:
-                                x = np.stack(
-                                    [draw_projected_bbox(x, bboxes[i, :, :2]) for i, x in enumerate(x)]
-                                )
-                            return x
-                        
-                        ref_bboxes = batch["image"]["cond"]["ref_bbox"].cpu().numpy()
-                        sample = get_images(image_samples, transform=un_norm, bboxes=ref_bboxes)
-                        input = get_images(data['image']['gt'], transform=un_norm, bboxes=ref_bboxes)
-                        reference = get_images(batch['image']['cond']["ref_image"], transform=un_norm_clip)
-                        input_inpaint = get_images(batch['image']['inpaint_image'], transform=un_norm, bboxes=ref_bboxes)
-
-                        grids = np.concatenate([input, input_inpaint, reference, sample], axis=1)
-
+                    if model.use_camera:
+                        pred_grid = log["image_preds"].cpu().numpy()[..., ::-1]
                         for i in range(batch_size):
-                            cv2.imwrite(os.path.join(result_path, 'grid-' + segment_id_batch[i] + '_img.png'), grids[i])
+                            cv2.imwrite(os.path.join(camera_path, 'grid-' + segment_id_batch[i] + '_img.png'), pred_grid[i])
 
-                    if "lidar" in data:
-                        raise NotImplementedError("Lidar visualization is not implemented yet.")
-                        lidar_samples = model.decode_lidar_stage(h_lidar)
-                        range_depth = batch["range_depth"][i].cpu().numpy()
-                        range_int = batch["range_int"][i].cpu().numpy()
-                        crop_left = batch["crop_left"][i].item()
-                        bbox_3d = batch['bbox_3d'][i].cpu().numpy()
+                    if model.use_lidar:
+                        pred_grid = log["lidar_preds"].cpu().numpy()[..., ::-1]
+                        rec_grid = log["lidar_input-rec"].cpu().numpy()[..., ::-1]
+                        for i in range(batch_size):
+                            cv2.imwrite(os.path.join(lidar_path, 'grid-' + segment_id_batch[i] + '_lidar.png'), pred_grid[i])
+                            cv2.imwrite(os.path.join(lidar_path, 'grid-' + segment_id_batch[i] + '_lidar_rec.png'), rec_grid[i])
 
-                        lidar_converter = LidarConverter()
-                        range_depth_new, _ = lidar_converter.undo_default_transforms(
-                            crop_left,
-                            range_depth=range_depth,
-                            range_depth_crop=x_sample,
-                            image_height=64,
-                            image_width=512,
-                            # mask=~mask[..., 0].astype(bool),
-                        )
-
-                        range_depth[range_depth_new == -2] = -1
-                        range_depth_new[range_depth_new == -2] = -1
-
-                        points_new, _ = lidar_converter.range2pcd(range_depth_new)
-                        points, _ = lidar_converter.range2pcd(range_depth)
-
-                        lidar_vis_new = visualize_lidar(points_new, bboxes=bbox_3d, xlim=(-40, 40), ylim=(-40, 40))
-                        lidar_vis = visualize_lidar(points, bboxes=bbox_3d, xlim=(-40, 40), ylim=(-40, 40))
-
-                        points, _ = focus_on_bbox(points, bbox_3d)
-                        points_new, bbox_3d = focus_on_bbox(points_new, bbox_3d)
+                        # lidar_converter = LidarConverter()
+                        # range_depth_new, _ = lidar_converter.undo_default_transforms(
+                        #     crop_left,
+                        #     range_depth=range_depth,
+                        #     range_depth_crop=x_sample,
+                        #     image_height=64,
+                        #     image_width=512,
+                        #     # mask=~mask[..., 0].astype(bool),
+                        # )
 
                         # cv2.imwrite(os.path.join(lidar_path, segment_id_batch[i] + "_lidar.png"), lidar_vis[:, :, ::-1])
                         # cv2.imwrite(os.path.join(lidar_path, segment_id_batch[i] + "_lidar_new.png"), lidar_vis_new[:, :, ::-1])
 
-                        if opt.compute_cd:
-                            global_cd = pcu.chamfer_distance(points, points_new)
+                        # if opt.compute_cd:
+                        #     global_cd = pcu.chamfer_distance(points, points_new)
 
-                            mask_points = points_in_bbox_corners(points, bbox_3d[None])
-                            object_points = points[mask_points[:, 0]]
-                            mask_points = points_in_bbox_corners(points_new, bbox_3d[None])
-                            object_points_new = points_new[mask_points[:, 0]]
+                        #     mask_points = points_in_bbox_corners(points, bbox_3d[None])
+                        #     object_points = points[mask_points[:, 0]]
+                        #     mask_points = points_in_bbox_corners(points_new, bbox_3d[None])
+                        #     object_points_new = points_new[mask_points[:, 0]]
 
-                            if len(object_points_new) == 0:
-                                object_cd = -1
-                            else:
-                                object_cd = pcu.chamfer_distance(object_points, object_points_new)
-                                metrics["object_CD"][batch["ref_class"][i]].append(object_cd)
-                                metrics["global_CD"][batch["ref_class"][i]].append(global_cd)
+                        #     if len(object_points_new) == 0:
+                        #         object_cd = -1
+                        #     else:
+                        #         object_cd = pcu.chamfer_distance(object_points, object_points_new)
+                        #         metrics["object_CD"][batch["ref_class"][i]].append(object_cd)
+                        #         metrics["global_CD"][batch["ref_class"][i]].append(global_cd)
 
-                            segment_id_batch[i] = segment_id_batch[i] + f"_CD_g{global_cd:.2f}_l{object_cd:.2f}"
-
-                        all_lidar = [lidar_vis, lidar_vis_new]
-                        lidar_grid = np.concatenate(all_lidar, axis=1)
-                        cv2.imwrite(os.path.join(result_path, 'grid-' + segment_id_batch[i] + '_lidar.png'), lidar_grid[..., ::-1])
-                        
+                        #     segment_id_batch[i] = segment_id_batch[i] + f"_CD_g{global_cd:.2f}_l{object_cd:.2f}"
 
     for score_name in metrics:
         for class_name in metrics[score_name]:

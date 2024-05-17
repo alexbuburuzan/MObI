@@ -25,6 +25,7 @@ from ldm.models.autoencoder import IdentityFirstStage, AutoencoderKL
 from ldm.models.lidar_diffusion import VQModelInterface
 from ldm.modules.diffusionmodules.util import make_beta_schedule, extract_into_tensor, noise_like
 from ldm.models.diffusion.ddim import DDIMSampler
+from ldm.data.utils import get_camera_vis, get_lidar_vis
 from torchvision.transforms import Resize
 
 import random
@@ -746,8 +747,7 @@ class LatentDiffusion(DDPM):
         return c, xc
 
     @torch.no_grad()
-    def get_input(self, batch, k, return_first_stage_outputs=False, force_c_encode=False,
-                  bs=None,get_mask=False,get_reference=False):
+    def get_input(self, batch, k, force_c_encode=False, bs=None, return_vae_rec=False):
         
         image_data, lidar_data = super().get_input(batch, k)
 
@@ -774,22 +774,17 @@ class LatentDiffusion(DDPM):
         out = {
             "z": [],
             "cond": [],
-            "bbox_3d": batch.get("bbox_3d"),
         }
         if self.use_camera:
             out["z"].append(z_image)
             c, _ = self.process_conditioning(image_data["cond"], force_c_encode=force_c_encode)
             out["cond"].append(c)
 
-            out["image"] = {}
-            if get_mask: out["image"]["mask"] = image_data["inpaint_mask"]
-            if get_reference: out["image"]["ref_image"] = image_data["cond"]["ref_image"]
-
-            if return_first_stage_outputs:
-                out["image"]["gt"] = image_data["GT"]
-                out["image"]["gt_rec"] = self.decode_first_stage(
+            if return_vae_rec:
+                out["image_rec"] = self.decode_first_stage(
                     z_image[:, :4, ...]
                 )
+                out["image_rec"] = torch.clamp(out["image_rec"], -1., 1.)
 
         if self.use_lidar:
             # crop and resize lidar feature map
@@ -804,18 +799,11 @@ class LatentDiffusion(DDPM):
             out["cond"].append(c)
             out["z_lidar"] = z_lidar[:, :8, ...]
 
-            out["lidar"] = {}
-            if get_mask:
-                out["lidar"]["mask"] = lidar_data["range_mask"]
-                out["lidar"]["instance_mask"] = lidar_data["range_instance_mask"]
-                out["lidar"]["shift_left"] = lidar_data["range_shift_left"]
-            if get_reference: out["lidar"]["ref_image"] = lidar_data["cond"]["ref_image"]
-
-            if return_first_stage_outputs:
-                out["lidar"]["gt"] = lidar_data["range_depth"]
-                out["lidar"]['gt_rec'] = self.decode_first_stage(
+            if return_vae_rec:
+                out["lidar_rec"] = self.decode_first_stage(
                     z_lidar[:, :8, ...], module_name="lidar_stage_model"
                 )
+                out["lidar_rec"] = torch.clamp(out["lidar_rec"], -1., 1.)
 
         out["z"] = cat_interleave(out["z"])
         if force_c_encode:
@@ -1429,18 +1417,13 @@ class LatentDiffusion(DDPM):
 
 
     @torch.no_grad()
-    def log_images(self, batch, N=4, ddim_steps=50, ddim_eta=1., split="train", **kwargs):
+    def log_images(self, batch, log_metrics=True, ddim_steps=50, ddim_eta=1., split="train", **kwargs):
         data = self.get_input(
             batch,
             self.first_stage_key,
-            return_first_stage_outputs=True,
             force_c_encode=True,
-            get_mask=True,
-            get_reference=True,
-            bs=N
+            return_vae_rec=True,
         )
-
-        log = dict()
 
         with self.ema_scope("Plotting"):
             if self.first_stage_key=='inpaint':
@@ -1450,51 +1433,70 @@ class LatentDiffusion(DDPM):
                 )   
                 h_camera, h_lidar = self.decode_sample(samples, data.get("z_lidar"))
 
-        # Image
-        if "image" in data:
-            image_samples = self.decode_first_stage(h_camera)
+        log, _ = self.log_data(batch, data, h_camera, h_lidar, log_metrics=log_metrics, split=split)
+        return log
+    
+    @torch.no_grad()
+    def log_data(self, batch, data, h_camera, h_lidar, log_metrics=True, split="train"):
+        log = dict()
+        lidar_metrics = None
+        if self.use_camera:
+            image_sample = self.decode_first_stage(h_camera)
+            image_sample = torch.clamp(image_sample, -1., 1.)
 
-            new_size = (224, 224)
-            reference = data['image']["ref_image"]
-            mask = F.interpolate(data["image"]["mask"], size=new_size, mode='bilinear').repeat(1, 3, 1, 1)
-            samples = F.interpolate(image_samples, size=new_size, mode='bilinear')
-            inputs = F.interpolate(data['image']['gt'], size=new_size, mode='bilinear')
-            rec = F.interpolate(data['image']['gt_rec'], size=new_size, mode='bilinear')
-            
-            log["image_samples"] = torch.cat([inputs, reference, mask, samples], dim=-2)
-            log["image_input-rec"] = torch.cat([inputs, rec], dim=-2)
+            sample, input, inpaint_input, reference, rec = get_camera_vis(
+                sample=image_sample,
+                input=batch["image"]["GT"],
+                inpaint_input=batch["image"]["inpaint_image"],
+                reference=batch["image"]["cond"]["ref_image"],
+                rec=data["image_rec"],
+                ref_bboxes=batch["image"]["cond"]["ref_bbox"],
+            )
 
-        # Lidar
-        if "lidar" in data:
-            lidar_samples = self.decode_first_stage(h_lidar, module_name="lidar_stage_model")
+            log["image_preds"] = torch.cat([input, inpaint_input, reference, sample], dim=-2)
+            log["image_input-rec"] = torch.cat([input, rec], dim=-2)
+
+        if self.use_lidar:
+            lidar_sample = self.decode_first_stage(h_lidar, module_name="lidar_stage_model")
+            lidar_sample = torch.clamp(lidar_sample, -1., 1.)
 
             new_size = (32, 1024)
-            reference = data['lidar']["ref_image"]
-            mask = F.interpolate(data["lidar"]["mask"][:, [0]], size=new_size, mode='nearest')
-            samples = F.interpolate(lidar_samples, size=new_size, mode='nearest')
-            inputs = F.interpolate(data["lidar"]["gt"], size=new_size, mode='nearest')
-            rec = F.interpolate(data["lidar"]["gt_rec"], size=new_size, mode='nearest')
-            
-            log["lidar_samples"] = torch.cat([inputs, mask, samples], dim=-2)
-            log["lidar_input-rec"] = torch.cat([inputs, rec], dim=-2)
+            mask = F.interpolate(batch["lidar"]["range_mask"][:, [0]], size=new_size, mode='nearest')
+            inpaint = F.interpolate(batch["lidar"]["range_depth_inpaint"], size=new_size, mode='nearest')
+            sample = F.interpolate(lidar_sample, size=new_size, mode='nearest')
+            input = F.interpolate(batch["lidar"]["range_depth"], size=new_size, mode='nearest')
+            rec = F.interpolate(data["lidar_rec"], size=new_size, mode='nearest')
 
-            instance_mask = data["lidar"]["instance_mask"]
+            log["range_preds"] = torch.cat([input, inpaint, sample], dim=-2)
+            log["range_input-rec"] = torch.cat([input, rec], dim=-2)
+
+            instance_mask = batch["lidar"]["range_instance_mask"]
             log["instance_mask"] = instance_mask
 
             # Compute metrics
             lidar_metrics = {
-                "object_pred_L1" : self.range_l1_metric(samples[instance_mask == 1], inputs[instance_mask == 1]),
-                "object_rec_L1" : self.range_l1_metric(rec[instance_mask == 1], inputs[instance_mask == 1]),
-                "mask_pred_L1" : self.range_l1_metric(samples[mask == 0], inputs[mask == 0]),
-                "mask_rec_L1" : self.range_l1_metric(rec[mask == 0], inputs[mask == 0]),
-                "full_pred_L1" : self.range_l1_metric(samples, inputs),
-                "full_rec_L1" : self.range_l1_metric(rec, inputs),
+                "object_pred_L1" : self.range_l1_metric(sample[instance_mask == 1], input[instance_mask == 1]),
+                "object_rec_L1" : self.range_l1_metric(rec[instance_mask == 1], input[instance_mask == 1]),
+                "mask_pred_L1" : self.range_l1_metric(sample[mask == 0], input[mask == 0]),
+                "mask_rec_L1" : self.range_l1_metric(rec[mask == 0], input[mask == 0]),
+                "full_pred_L1" : self.range_l1_metric(sample, input),
+                "full_rec_L1" : self.range_l1_metric(rec, input),
             }
 
-            lidar_metrics = {f"{split}/{k}": v for k, v in lidar_metrics.items()}
-            self.log_dict(lidar_metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+            # Make metrics more interpretable by scaling them to the original range
+            lidar_metrics = {f"{split}/{k}": v * 25.6 for k, v in lidar_metrics.items()}
+            if log_metrics:
+                self.log_dict(lidar_metrics, on_step=False, on_epoch=True, prog_bar=True, logger=True)
 
-        return log
+            # Point cloud visualisations
+            sample_vis, input_vis, rec_vis = get_lidar_vis(
+                sample, input, rec, batch["bbox_3d"], batch["lidar"]["range_shift_left"]
+            )
+
+            log["lidar_preds"] = torch.cat([input_vis, sample_vis], dim=-2)
+            log["lidar_input-rec"] = torch.cat([input_vis, rec_vis], dim=-2)
+
+        return log, lidar_metrics
 
     def configure_optimizers(self):
         lr = self.learning_rate

@@ -277,6 +277,7 @@ class SetupCallback(Callback):
         self.lightning_config = lightning_config
 
     def on_keyboard_interrupt(self, trainer, pl_module):
+        return
         if trainer.global_rank == 0:
             print("Summoning checkpoint.")
             ckpt_path = os.path.join(self.ckptdir, "last.ckpt")
@@ -338,7 +339,11 @@ class ImageLogger(Callback):
     def _testtube(self, pl_module, images, batch_idx, split):
         for k in images:
             grid = torchvision.utils.make_grid(images[k])
-            grid = (grid + 1.0) / 2.0  # -1,1 -> 0,1; c,h,w
+
+            if grid.dtype == torch.uint8:
+                grid = grid.permute(2, 0, 1)
+            else:
+                grid = (grid + 1.0) / 2.0  # -1,1 -> 0,1; c,h,w
 
             tag = f"{split}/{k}"
             pl_module.logger.experiment.add_image(
@@ -388,8 +393,8 @@ class ImageLogger(Callback):
                     if self.clamp:
                         images[k] = torch.clamp(images[k], -1., 1.)
 
-            self.log_local(pl_module.logger.save_dir, split, images,
-                           pl_module.global_step, pl_module.current_epoch, batch_idx)
+            # self.log_local(pl_module.logger.save_dir, split, images,
+            #                pl_module.global_step, pl_module.current_epoch, batch_idx)
 
             logger_log_images = self.logger_log_images.get(logger, lambda *args, **kwargs: None)
 
@@ -600,9 +605,9 @@ if __name__ == "__main__":
         "image_logger": {
             "target": "main.ImageLogger",
             "params": {
-                "batch_frequency": 100,
-                "max_images": 4,
-                "clamp": True,
+                "batch_frequency": 20,
+                "max_images": 8,
+                "clamp": False,
                 "log_on_batch_idx": True,
                 "log_first_step": True,
             }
@@ -697,6 +702,7 @@ if __name__ == "__main__":
     # allow checkpointing via USR1
     def melk(*args, **kwargs):
         # run all checkpoint hooks
+        return
         if trainer.global_rank == 0:
             print("Summoning checkpoint.")
             ckpt_path = os.path.join(ckptdir, "last.ckpt")

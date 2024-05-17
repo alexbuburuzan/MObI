@@ -117,7 +117,7 @@ class LidarConverter:
             pcd: np.array, shape (N, 3)
             label: np.array, shape (N,)
         """
-        range_depth, range_int, _ = self._copy_tensors(range_depth, range_int, None)
+        range_depth, range_int, _ = self._copy_arrays(range_depth, range_int, None)
 
         # derasterize with default dimensions
         range_depth, range_int, _ = self.resize(range_depth, range_int, new_H=self.base_size[0], new_W=self.base_size[1])
@@ -230,7 +230,7 @@ class LidarConverter:
             range_int: np.array, shape (new_H, new_W)
             bbox_range_coords: np.array, shape (N, 3)
         """
-        range_depth, range_int, bbox_range_coords = self._copy_tensors(
+        range_depth, range_int, bbox_range_coords = self._copy_arrays(
             range_depth, range_int, bbox_range_coords
         )
 
@@ -272,7 +272,7 @@ class LidarConverter:
             range_int: np.array, shape (H + pad, W)
             bbox_range_coords: np.array, shape (8, 3)
         """
-        range_depth, range_int, bbox_range_coords = self._copy_tensors(
+        range_depth, range_int, bbox_range_coords = self._copy_arrays(
             range_depth, range_int, bbox_range_coords
         )
         padding = ((pad // 2, pad // 2), (0, 0))
@@ -310,7 +310,7 @@ class LidarConverter:
             range_int: np.array, shape (H - pad, W)
             bbox_range_coords: np.array, shape (8, 3)
         """
-        range_depth, range_int, bbox_range_coords = self._copy_tensors(
+        range_depth, range_int, bbox_range_coords = self._copy_arrays(
             range_depth, range_int, bbox_range_coords
         )
 
@@ -380,7 +380,7 @@ class LidarConverter:
             crop_left: int, left-side crop from range view
         """
         assert bbox_range_coords is not None
-        range_depth, range_int, bbox_range_coords = self._copy_tensors(
+        range_depth, range_int, bbox_range_coords = self._copy_arrays(
             range_depth, range_int, bbox_range_coords
         )
 
@@ -404,7 +404,7 @@ class LidarConverter:
         crop_left = (center_x - d_left) % width
         return range_depth, range_int, bbox_range_coords, crop_left
 
-    def _copy_tensors(
+    def _copy_arrays(
         self,
         range_depth=None,
         range_int=None,
@@ -474,8 +474,8 @@ class LidarConverter:
         assert range_depth is None or range_depth_crop is not None, "If range_depth is not None, range_depth_crop must be provided"
         assert range_int is None or range_int_crop is not None, "If range_int is not None, range_int_crop must be provided"
 
-        range_depth, range_int, _ = self._copy_tensors(range_depth, range_int)
-        range_depth_crop, range_int_crop, _ = self._copy_tensors(range_depth_crop, range_int_crop)
+        range_depth, range_int, _ = self._copy_arrays(range_depth, range_int)
+        range_depth_crop, range_int_crop, _ = self._copy_arrays(range_depth_crop, range_int_crop)
 
         ignore = -1000
 
