@@ -3,6 +3,8 @@ use_camera: True
 use_lidar: True
 image_height: 512
 image_width: 512
+range_height: 64
+range_width: 1024
 
 classes:
   - car
@@ -141,6 +143,8 @@ data:
               ref_mode: same-ref
               image_height: ${image_height}
               image_width: ${image_width}
+              range_height: ${range_height}
+              range_width: ${range_width}
               reference_image_min_w: 200
               reference_image_min_h: 200
               frustum_iou_max: 0.5
@@ -160,6 +164,8 @@ data:
               ref_mode: same-ref
               image_height: ${image_height}
               image_width: ${image_width}
+              range_height: ${range_height}
+              range_width: ${range_width}
               reference_image_min_w: 200
               reference_image_min_h: 200
               frustum_iou_max: 0.5
@@ -179,6 +185,8 @@ data:
               ref_mode: same-ref
               image_height: ${image_height}
               image_width: ${image_width}
+              range_height: ${range_height}
+              range_width: ${range_width}
               reference_image_min_w: 200
               reference_image_min_h: 200
               frustum_iou_max: 0.5
@@ -199,6 +207,8 @@ data:
               ref_mode: same-ref
               image_height: ${image_height}
               image_width: ${image_width}
+              range_height: ${range_height}
+              range_width: ${range_width}
               reference_image_min_w: 200
               reference_image_min_h: 200
               frustum_iou_max: 0.5
