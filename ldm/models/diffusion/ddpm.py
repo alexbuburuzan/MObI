@@ -787,7 +787,10 @@ class LatentDiffusion(DDPM):
                 out["image_rec"] = torch.clamp(out["image_rec"], -1., 1.)
 
         if self.use_lidar:
-            # crop and resize lidar feature map
+            # Align lidar feature map with image latent
+            if z_lidar.shape[-1] != self.image_size:
+                warnings.warn("Cropping lidar feature map to match image latent size.")
+
             W = z_lidar.shape[-1]
             left, right = W // 2 - self.image_size // 2, W // 2 + self.image_size // 2
             out["z"].append(
@@ -1404,14 +1407,20 @@ class LatentDiffusion(DDPM):
         if self.use_camera and self.use_lidar:
             h_camera = sample[::2][:, :4, :, :]
             h_lidar = F.interpolate(sample[1::2], size=(z_lidar.shape[-2], self.image_size), mode='bilinear')
-            z_lidar[..., z_lidar.shape[-1]//2 - self.image_size//2 :z_lidar.shape[-1]//2 + self.image_size//2] = h_lidar
-            h_lidar = z_lidar
+
+            if self.image_size != z_lidar.shape[-1]:
+                # Undo lidar latent crop
+                z_lidar[..., z_lidar.shape[-1]//2 - self.image_size//2 :z_lidar.shape[-1]//2 + self.image_size//2] = h_lidar
+                h_lidar = z_lidar
         elif self.use_camera:
             h_camera = sample[:, :4, :, :]
         else:
             h_lidar = F.interpolate(sample, size=(z_lidar.shape[-2], self.image_size), mode='bilinear')
-            z_lidar[..., z_lidar.shape[-1]//2 - self.image_size//2 :z_lidar.shape[-1]//2 + self.image_size//2] = h_lidar
-            h_lidar = z_lidar
+
+            if self.image_size != z_lidar.shape[-1]:
+                # Undo lidar latent crop
+                z_lidar[..., z_lidar.shape[-1]//2 - self.image_size//2 :z_lidar.shape[-1]//2 + self.image_size//2] = h_lidar
+                h_lidar = z_lidar
 
         return h_camera, h_lidar
 
@@ -1460,18 +1469,16 @@ class LatentDiffusion(DDPM):
             lidar_sample = self.decode_first_stage(h_lidar, module_name="lidar_stage_model")
             lidar_sample = torch.clamp(lidar_sample, -1., 1.)
 
-            new_size = (32, 1024)
+            new_size = (32, lidar_sample.shape[-1])
             mask = F.interpolate(batch["lidar"]["range_mask"][:, [0]], size=new_size, mode='nearest')
             inpaint = F.interpolate(batch["lidar"]["range_depth_inpaint"], size=new_size, mode='nearest')
             sample = F.interpolate(lidar_sample, size=new_size, mode='nearest')
             input = F.interpolate(batch["lidar"]["range_depth"], size=new_size, mode='nearest')
             rec = F.interpolate(data["lidar_rec"], size=new_size, mode='nearest')
+            instance_mask = F.interpolate(batch["lidar"]["range_instance_mask"], size=new_size, mode='nearest')
 
-            log["range_preds"] = torch.cat([input, inpaint, sample], dim=-2)
+            log["range_preds"] = torch.cat([input, inpaint, instance_mask, sample], dim=-2)
             log["range_input-rec"] = torch.cat([input, rec], dim=-2)
-
-            instance_mask = batch["lidar"]["range_instance_mask"]
-            log["instance_mask"] = instance_mask
 
             # Compute metrics
             lidar_metrics = {
@@ -1490,7 +1497,12 @@ class LatentDiffusion(DDPM):
 
             # Point cloud visualisations
             sample_vis, input_vis, rec_vis = get_lidar_vis(
-                sample, input, rec, batch["bbox_3d"], batch["lidar"]["range_shift_left"]
+                sample=sample,
+                input=input,
+                rec=rec,
+                bboxes=batch["bbox_3d"],
+                range_depth_orig=batch["lidar"]["range_depth_orig"],
+                range_shift_left=batch["lidar"]["range_shift_left"],
             )
 
             log["lidar_preds"] = torch.cat([input_vis, sample_vis], dim=-2)

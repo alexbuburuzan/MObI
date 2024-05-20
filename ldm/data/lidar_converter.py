@@ -40,8 +40,7 @@ class LidarConverter:
             range_int: np.array, shape (H, W)
             mask: np.array, shape (N,)
         """
-        pcd = pcd.copy()
-        label = label.copy() if label is not None else None
+        pcd, label = self._copy_arrays(pcd, label)
 
         # get depth (distance) of all points
         depth = np.linalg.norm(pcd, 2, axis=1)
@@ -105,22 +104,24 @@ class LidarConverter:
     def range2pcd(
         self,
         range_depth,
-        range_int=None,
+        label=None,
     ):
         """
         Convert range view to point cloud
 
         Args:
             range_depth: np.array, shape (H, W)
-            range_int: np.array, shape (H, W)
+            label: np.array, shape (H, W)
         Returns:
             pcd: np.array, shape (N, 3)
             label: np.array, shape (N,)
         """
-        range_depth, range_int, _ = self._copy_arrays(range_depth, range_int, None)
+        range_depth, label = self._copy_arrays(range_depth, label)
 
         # derasterize with default dimensions
-        range_depth, range_int, _ = self.resize(range_depth, range_int, new_H=self.base_size[0], new_W=self.base_size[1])
+        range_depth, label, _, _ = self.resize(
+            range_depth, label, new_H=self.base_size[0], new_W=self.base_size[1]
+        )
         range_depth = (range_depth + 1) / 2
 
         if self.log_scale:
@@ -147,9 +148,9 @@ class LidarConverter:
         mask = np.logical_and(depth > self.depth_range[0], depth < self.depth_range[1])
         pcd = pcd[mask, :]
 
-        # range_int
-        if range_int is not None:
-            label = range_int.flatten()[mask]
+        # label
+        if label is not None:
+            label = label.flatten()[mask]
         else:
             label = None
 
@@ -212,6 +213,7 @@ class LidarConverter:
         self,
         range_depth=None,
         range_int=None,
+        mask=None,
         bbox_range_coords=None,
         new_W=1024,
         new_H=32,
@@ -222,6 +224,7 @@ class LidarConverter:
         Args:
             range_depth: np.array, shape (H, W)
             range_int: np.array, shape (H, W)
+            mask: np.array, shape (H, W) object isntance mask
             bbox_range_coords: np.array, shape (8, 3)
             new_W: int
             new_H: int
@@ -230,8 +233,8 @@ class LidarConverter:
             range_int: np.array, shape (new_H, new_W)
             bbox_range_coords: np.array, shape (N, 3)
         """
-        range_depth, range_int, bbox_range_coords = self._copy_arrays(
-            range_depth, range_int, bbox_range_coords
+        range_depth, range_int, mask, bbox_range_coords = self._copy_arrays(
+            range_depth, range_int, mask, bbox_range_coords
         )
 
         if range_depth is not None and range_depth.shape != (new_H, new_W):
@@ -242,93 +245,23 @@ class LidarConverter:
             range_int = cv2.resize(
                 range_int, (new_W, new_H), interpolation=cv2.INTER_NEAREST
             )
+        if mask is not None and mask.shape != (new_H, new_W):
+            mask = cv2.resize(
+                mask, (new_W, new_H), interpolation=cv2.INTER_NEAREST
+            )
         if bbox_range_coords is not None:
             bbox_range_coords[:, 0] = bbox_range_coords[:, 0] * new_W / self.W
             bbox_range_coords[:, 1] = bbox_range_coords[:, 1] * new_H / self.H
 
         self.W, self.H = new_W, new_H
 
-        return range_depth, range_int, bbox_range_coords
-
-    def vertical_pad(
-        self,
-        range_depth=None,
-        range_int=None,
-        bbox_range_coords=None,
-        val=-1,
-        pad=0,
-    ):
-        """
-        Pad range view vertically. Pads equally on top and bottom.
-
-        Args:
-            range_depth: np.array, shape (H, W)
-            range_int: np.array, shape (H, W)
-            bbox_range_coords: np.array, shape (8, 3)
-            val: int, value to fill the padding
-            pad: int, padding size
-        Returns:
-            range_depth: np.array, shape (H + pad, W)
-            range_int: np.array, shape (H + pad, W)
-            bbox_range_coords: np.array, shape (8, 3)
-        """
-        range_depth, range_int, bbox_range_coords = self._copy_arrays(
-            range_depth, range_int, bbox_range_coords
-        )
-        padding = ((pad // 2, pad // 2), (0, 0))
-
-        if range_depth is not None:
-            range_depth = np.pad(
-                range_depth, padding, mode="constant", constant_values=val
-            )
-        if range_int is not None:
-            range_int = np.pad(range_int, padding, mode="constant", constant_values=val)
-        if bbox_range_coords is not None:
-            bbox_range_coords[:, 1] += pad // 2
-
-        self.H += pad
-
-        return range_depth, range_int, bbox_range_coords
-    
-    def undo_vertical_pad(
-        self,
-        range_depth=None,
-        range_int=None,
-        bbox_range_coords=None,
-        pad=0,
-    ):
-        """
-        Unpad range view vertically. Removes padding equally from top and bottom.
-
-        Args:
-            range_depth: np.array, shape (H, W)
-            range_int: np.array, shape (H, W)
-            bbox_range_coords: np.array, shape (8, 3)
-            pad: int, padding size
-        Returns:
-            range_depth: np.array, shape (H - pad, W)
-            range_int: np.array, shape (H - pad, W)
-            bbox_range_coords: np.array, shape (8, 3)
-        """
-        range_depth, range_int, bbox_range_coords = self._copy_arrays(
-            range_depth, range_int, bbox_range_coords
-        )
-
-        if range_depth is not None:
-            range_depth = range_depth[pad // 2 : -pad // 2]
-        if range_int is not None:
-            range_int = range_int[pad // 2 : -pad // 2]
-        if bbox_range_coords is not None:
-            bbox_range_coords[:, 1] -= pad // 2
-
-        self.H -= pad
-
-        return range_depth, range_int, bbox_range_coords
+        return range_depth, range_int, mask, bbox_range_coords
 
     def tile(
         self,
         range_depth=None,
         range_int=None,
+        mask=None,
         bbox_range_coords=None,
         n=3,
     ):
@@ -338,6 +271,7 @@ class LidarConverter:
         Args:
             range_depth: np.array, shape (H, W)
             range_int: np.array, shape (H, W)
+            mask: np.array, shape (H, W) object instance mask
             bbox_range_coords: np.array, shape (8, 3)
             n: int, number of tiles
         Returns:
@@ -349,18 +283,21 @@ class LidarConverter:
             range_depth = np.tile(range_depth, n)
         if range_int is not None:
             range_int = np.tile(range_int, n)
+        if mask is not None:
+            mask = np.tile(mask, n)
         if bbox_range_coords is not None:
             bbox_range_coords[:, 0] += self.W
 
         self.W *= n
 
-        return range_depth, range_int, bbox_range_coords
+        return range_depth, range_int, mask, bbox_range_coords
 
     def bbox_crop(
         self,
         bbox_range_coords,
         range_depth=None,
         range_int=None,
+        mask=None,
         width=1024,
         random_crop=False,
         crop_left=None,
@@ -372,7 +309,10 @@ class LidarConverter:
             bbox_range_coords: np.array, shape (8, 3)
             range_depth: np.array, shape (H, W)
             range_int: np.array, shape (H, W)
+            mask: np.array, shape (H, W) object instance mask
             width: int
+            random_crop: bool, whether to perform random cropping
+            crop_left: int, left-side crop from range view
         Returns:
             range_depth: np.array, shape (H, width)
             range_int: np.array, shape (H, width)
@@ -380,8 +320,8 @@ class LidarConverter:
             crop_left: int, left-side crop from range view
         """
         assert bbox_range_coords is not None
-        range_depth, range_int, bbox_range_coords = self._copy_arrays(
-            range_depth, range_int, bbox_range_coords
+        range_depth, range_int, mask, bbox_range_coords = self._copy_arrays(
+            range_depth, range_int, mask, bbox_range_coords
         )
 
         center_x = int(np.mean(bbox_range_coords[:, 0]))
@@ -398,110 +338,98 @@ class LidarConverter:
             range_depth = range_depth[:, center_x - d_left : center_x + d_right]
         if range_int is not None:
             range_int = range_int[:, center_x - d_left : center_x + d_right]
+        if mask is not None:
+            mask = mask[:, center_x - d_left : center_x + d_right]
         bbox_range_coords = bbox_range_coords - np.array([center_x - d_left, 0, 0])
-        bbox_range_coords[:, 0] %= width
+        bbox_range_coords[:, 0]
+        crop_left = center_x - d_left
 
-        crop_left = (center_x - d_left) % width
-        return range_depth, range_int, bbox_range_coords, crop_left
+        return range_depth, range_int, mask, bbox_range_coords, crop_left
 
-    def _copy_arrays(
-        self,
-        range_depth=None,
-        range_int=None,
-        bbox_range_coords=None,
-    ):
+    def _copy_arrays(self, *args):
         """
         Utility function to copy tensors
         """
-        range_depth = range_depth.copy() if range_depth is not None else None
-        range_int = range_int.copy() if range_int is not None else None
-        bbox_range_coords = (
-            bbox_range_coords.copy() if bbox_range_coords is not None else None
-        )
-
-        return range_depth, range_int, bbox_range_coords
+        return (arg.copy() if arg is not None else None for arg in args)
 
     def apply_default_transforms(
         self,
         bbox_range_coords,
         range_depth=None,
         range_int=None,
+        mask=None,
         height=32,
         width=1024,
         crop_left=None,
+        random_crop=False,
     ):
         """
-        Apply default transforms to range view which includes resizing, padding, tiling and cropping
+        Apply default transforms to range view which includes resizing, tiling and cropping
 
         Args:
             bbox_range_coords: np.array, shape (8, 3)
             range_depth: np.array, shape (H, W)
             range_int: np.array, shape (H, W)
+            mask: np.array, shape (H, W) object instance mask
             height: int
             width: int
             crop_left: int, left-side crop from range view
+            random_crop: bool, whether to perform random cropping
         Returns:
             range_depth: np.array, shape (height, width)
             range_int: np.array, shape (height, width)
             bbox_range_coords: np.array, shape (8, 3)
         """
-        range_depth, range_int, bbox_range_coords = self.resize(
-            range_depth, range_int, bbox_range_coords, new_H=height
+        range_depth, range_int, mask, bbox_range_coords = self.resize(
+            range_depth, range_int, mask, bbox_range_coords, new_H=height
         )
-        # range_depth, range_int, bbox_range_coords = self.vertical_pad(
-        #     range_depth, range_int, bbox_range_coords, pad=height // 2
-        # )
-        range_depth, range_int, bbox_range_coords = self.tile(
-            range_depth, range_int, bbox_range_coords, n=3
+        range_depth, range_int, mask, bbox_range_coords = self.tile(
+            range_depth, range_int, mask, bbox_range_coords, n=3
         )
-        range_depth, range_int, bbox_range_coords, crop_left = self.bbox_crop(
-            bbox_range_coords, range_depth, range_int, width=width, crop_left=crop_left
+        range_depth, range_int, mask, bbox_range_coords, crop_left = self.bbox_crop(
+            bbox_range_coords, range_depth, range_int, mask,
+            width=width, crop_left=crop_left, random_crop=random_crop
         )
 
-        return range_depth, range_int, bbox_range_coords, crop_left
+        return range_depth, range_int, mask, bbox_range_coords, crop_left
     
     def undo_default_transforms(
         self,
         crop_left,
-        range_depth_crop=None,
+        range_depth_crop,
+        range_depth,
         range_int_crop=None,
-        range_depth=None,
         range_int=None,
-        height=32,
-        width=1024,
         mask=None,
     ):
-        assert range_depth is None or range_depth_crop is not None, "If range_depth is not None, range_depth_crop must be provided"
         assert range_int is None or range_int_crop is not None, "If range_int is not None, range_int_crop must be provided"
 
-        range_depth, range_int, _ = self._copy_arrays(range_depth, range_int)
-        range_depth_crop, range_int_crop, _ = self._copy_arrays(range_depth_crop, range_int_crop)
+        range_depth, range_int = self._copy_arrays(range_depth, range_int)
+        range_depth_crop, range_int_crop = self._copy_arrays(range_depth_crop, range_int_crop)
 
         ignore = -1000
+        width_crop = range_depth_crop.shape[-1]
+        crop_left = crop_left % range_depth.shape[-1]
 
         if mask is not None:
-            if range_depth_crop is not None: range_depth_crop[~mask] = ignore
+            range_depth_crop[~mask] = ignore
             if range_int_crop is not None: range_int_crop[~mask] = ignore
 
-        # range_depth_crop, range_int_crop, _ = self.undo_vertical_pad(
-        #     range_depth_crop, range_int_crop, pad=height // 2
-        # )
-
-        range_depth_crop, range_int_crop, _ = self.resize(
-            range_depth_crop, range_int_crop, new_W=width, new_H=range_depth.shape[0]
+        range_depth_crop, range_int_crop, _, _ = self.resize(
+            range_depth_crop, range_int_crop, new_W=width_crop, new_H=range_depth.shape[0]
         )
 
-        if range_depth is not None:
-            if mask is not None:
-                range_depth_aux = np.zeros_like(range_depth) + ignore
-            else:
-                range_depth_aux = range_depth.copy()
+        if mask is not None:
+            range_depth_aux = np.zeros_like(range_depth) + ignore
+        else:
+            range_depth_aux = range_depth.copy()
 
-            right = min(crop_left + range_depth_crop.shape[1], range_depth.shape[1])
-            range_depth_aux[:, crop_left : right] = range_depth_crop[:, : right - crop_left]
-            range_depth_aux[:, :width - (right - crop_left)] = range_depth_crop[:, right - crop_left :]
+        right = min(crop_left + range_depth_crop.shape[1], range_depth.shape[1])
+        range_depth_aux[:, crop_left : right] = range_depth_crop[:, : right - crop_left]
+        range_depth_aux[:, :width_crop - (right - crop_left)] = range_depth_crop[:, right - crop_left :]
 
-            range_depth = np.where(range_depth_aux == ignore, range_depth, range_depth_aux)
+        range_depth = np.where(range_depth_aux == ignore, range_depth, range_depth_aux)
+
         if range_int is not None:
             if mask is not None:
                 range_int_aux = np.zeros_like(range_int) + ignore
@@ -510,7 +438,7 @@ class LidarConverter:
 
             right = min(crop_left + range_int_crop.shape[1], range_int.shape[1])
             range_int_aux[:, crop_left : right] = range_int_crop[:, : right - crop_left]
-            range_int_aux[:, :width - (right - crop_left)] = range_int_crop[:, right - crop_left :]
+            range_int_aux[:, :width_crop - (right - crop_left)] = range_int_crop[:, right - crop_left :]
 
             range_int = np.where(range_int_aux == ignore, range_int, range_int_aux)
 

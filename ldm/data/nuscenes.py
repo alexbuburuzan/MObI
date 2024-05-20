@@ -69,6 +69,7 @@ class NuScenesDataset(data.Dataset):
         rot_test_scene=None, # used for rotation test
         use_lidar=False,
         use_camera=True,
+        random_range_crop=False,
     ) -> None:
         self.state = state
         self.ref_aug = ref_aug
@@ -79,6 +80,7 @@ class NuScenesDataset(data.Dataset):
         self.rot_test_scene = rot_test_scene
         self.use_lidar = use_lidar
         self.use_camera = use_camera
+        self.random_range_crop = random_range_crop
 
         # Dimensions
         self.image_height = image_height
@@ -91,6 +93,7 @@ class NuScenesDataset(data.Dataset):
         self.objects_meta = self.objects_meta[
             (self.objects_meta["reference_image_h"] >= reference_image_min_w) &
             (self.objects_meta["reference_image_w"] >= reference_image_min_h) &
+            (self.objects_meta["reference_image_w"] <  1400) &
             (self.objects_meta["max_iou_overlap"] <= frustum_iou_max) &
             (self.objects_meta["object_class"].isin(object_classes)) &
             (self.objects_meta["camera_visibility_mask"] >= camera_visibility_min)
@@ -242,9 +245,9 @@ class NuScenesDataset(data.Dataset):
             range_int = np.load(scene_info["range_intensity_path"])
 
             if "range_instance_mask_path" in scene_info:
-                range_instance_mask = (np.load(scene_info["range_instance_mask_path"]) == obj_idx)
+                range_instance_mask = (np.load(scene_info["range_instance_mask_path"]) == obj_idx).astype(np.float32)
             else:
-                range_instance_mask = np.zeros_like(range_depth)
+                range_instance_mask = np.zeros_like(range_depth).astype(np.float32)
                 warnings.warn("No instance mask found")
         elif "lidar_path" in scene_info:
             lidar_scan = np.load(scene_info["lidar_path"])
@@ -256,13 +259,18 @@ class NuScenesDataset(data.Dataset):
         # Get range coords of the bbox
         bbox_range_coords = lidar_converter.get_range_coords(bbox_3d)
 
+        range_depth_orig = range_depth.copy()
+        range_int_orig = range_int.copy()
+
         # Preprocess range data
-        range_depth, range_int, bbox_range_coords, range_shift_left = lidar_converter.apply_default_transforms(
+        range_depth, range_int, range_instance_mask, bbox_range_coords, range_shift_left = lidar_converter.apply_default_transforms(
             range_depth=range_depth,
             range_int=range_int,
+            mask=range_instance_mask,
             bbox_range_coords=bbox_range_coords,
             height=self.range_height,
             width=self.range_width,
+            random_crop=self.random_range_crop,
         )
 
         range_depth = get_tensor(normalize=False, toTensor=True)(range_depth)
@@ -279,7 +287,6 @@ class NuScenesDataset(data.Dataset):
             bbox_3d, self.range_height, self.range_width, self.expand_mask_ratio, range_shift_left,
         )
         range_mask = range_mask.unsqueeze(0)
-        range_instance_mask = np.roll(range_instance_mask, -range_shift_left, axis=-1)
         range_instance_mask = torch.tensor(range_instance_mask).float().unsqueeze(0)
 
         # Inpainted range
@@ -289,10 +296,12 @@ class NuScenesDataset(data.Dataset):
         data = {
             "range_depth": range_depth,
             "range_int": range_int,
-            "range_mask": range_mask,
+            "range_depth_orig": range_depth_orig,
+            "range_int_orig": range_int_orig,
             "range_depth_inpaint": range_depth_inpaint,
             "range_int_inpaint": range_int_inpaint,
             "range_shift_left": range_shift_left,
+            "range_mask": range_mask,
             "range_instance_mask": range_instance_mask,
             "cond": {
                 "ref_bbox": bbox_range_coords,
