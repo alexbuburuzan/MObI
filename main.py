@@ -340,9 +340,7 @@ class ImageLogger(Callback):
         for k in images:
             grid = torchvision.utils.make_grid(images[k])
 
-            if grid.dtype == torch.uint8:
-                grid = grid.permute(2, 0, 1)
-            else:
+            if grid.dtype != torch.uint8:
                 grid = (grid + 1.0) / 2.0  # -1,1 -> 0,1; c,h,w
 
             tag = f"{split}/{k}"
