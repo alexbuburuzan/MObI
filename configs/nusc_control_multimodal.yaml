@@ -1,10 +1,11 @@
-latent_size: 64
+latent_size: 32
 use_camera: True
 use_lidar: True
-image_height: 512
-image_width: 512
+image_height: 256
+image_width: 256
 range_height: 64
-range_width: 1024
+range_width: 256
+batch_size: 2
 
 classes:
   - car
@@ -126,7 +127,7 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-      batch_size: 1
+      batch_size: ${batch_size}
       wrap: False
       train:
           target: ldm.data.nuscenes.NuScenesDataset
@@ -149,6 +150,7 @@ data:
               reference_image_min_h: 200
               frustum_iou_max: 0.5
               object_classes: ${classes}
+              random_range_crop: True
       validation:
           target: ldm.data.nuscenes.NuScenesDataset
           params:
@@ -170,6 +172,7 @@ data:
               reference_image_min_h: 200
               frustum_iou_max: 0.5
               object_classes: ${classes}
+              random_range_crop: True
       test:
           target: ldm.data.nuscenes.NuScenesDataset
           params:
