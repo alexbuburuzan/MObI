@@ -1493,7 +1493,7 @@ class LatentDiffusion(DDPM):
             # Make metrics more interpretable by scaling them to the original range
             lidar_metrics = {f"{split}/{k}": v * 25.6 for k, v in lidar_metrics.items()}
             if log_metrics:
-                self.log_dict(lidar_metrics, on_step=False, on_epoch=True, prog_bar=True, logger=True)
+                self.log_dict(lidar_metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
             # Point cloud visualisations
             sample_vis, input_vis, rec_vis = get_lidar_vis(
@@ -1505,8 +1505,7 @@ class LatentDiffusion(DDPM):
                 range_shift_left=batch["lidar"]["range_shift_left"],
             )
 
-            log["lidar_preds"] = torch.cat([input_vis, sample_vis], dim=-2)
-            log["lidar_input-rec"] = torch.cat([input_vis, rec_vis], dim=-2)
+            log["lidar_input-pred-rec"] = torch.cat([input_vis, sample_vis, rec_vis], dim=-2)
 
         return log, lidar_metrics
 
