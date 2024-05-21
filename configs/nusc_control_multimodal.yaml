@@ -9,15 +9,15 @@ batch_size: 2
 
 classes:
   - car
-  - truck
-  - construction_vehicle
-  - bus
-  - trailer
-  - barrier
-  - motorcycle
-  - bicycle
   - pedestrian
-  - traffic_cone
+  # - traffic_cone
+  # - truck
+  # - construction_vehicle
+  # - bus
+  # - trailer
+  # - barrier
+  # - motorcycle
+  # - bicycle
 
 conditions:
   - ref_image
