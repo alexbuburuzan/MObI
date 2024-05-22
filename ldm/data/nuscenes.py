@@ -70,6 +70,7 @@ class NuScenesDataset(data.Dataset):
         use_lidar=False,
         use_camera=True,
         random_range_crop=False,
+        num_samples_per_class=None,
     ) -> None:
         self.state = state
         self.ref_aug = ref_aug
@@ -100,9 +101,9 @@ class NuScenesDataset(data.Dataset):
         ]
 
         # Select an object from each class when testing
-        if self.state == "test":
+        if num_samples_per_class is not None:
             self.objects_meta = self.objects_meta.groupby("object_class").apply(
-                lambda x: x.sample(1)
+                lambda x: x.sample(num_samples_per_class)
             ).reset_index(drop=True)
 
         if rot_every_angle != 0:

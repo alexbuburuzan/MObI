@@ -276,11 +276,11 @@ def main():
         test_data_config = config.data.params.rotation_test
         test_dataset = instantiate_from_config(test_data_config)
     elif opt.compute_metrics:
-        test_data_config = config.data.params.validation
-        test_data_config['params']['ref_aug'] = False
+        test_data_config = config.data.params.test
         test_dataset = instantiate_from_config(test_data_config)
     else:
         test_data_config = config.data.params.test
+        test_data_config['params']['num_sample_per_class'] = 1
 
         test_data_config['params']['ref_aug'] = False
         test_data_config['params']['ref_mode'] = "same-ref"
@@ -301,17 +301,17 @@ def main():
         test_dataset_random = instantiate_from_config(test_data_config)
         test_dataset_random.objects_meta = test_dataset.objects_meta
 
-        # test_data_config['params']['ref_aug'] = False
-        # test_data_config['params']['ref_mode'] = "no-ref"
-        # test_dataset_erase = instantiate_from_config(test_data_config)
-        # test_dataset_erase.objects_meta = test_dataset.objects_meta
+        test_data_config['params']['ref_aug'] = False
+        test_data_config['params']['ref_mode'] = "no-ref"
+        test_dataset_erase = instantiate_from_config(test_data_config)
+        test_dataset_erase.objects_meta = test_dataset.objects_meta
 
         test_dataset = ConcatDataset([
             test_dataset,
             test_dataset_aug,
             test_dataset_track,
             test_dataset_random,
-            # test_dataset_erase,
+            test_dataset_erase,
         ])
     
 
@@ -396,45 +396,12 @@ def main():
                                     metrics[k] = []
                                 metrics[k].append(v.item())
 
-                        # lidar_converter = LidarConverter()
-                        # range_depth_new, _ = lidar_converter.undo_default_transforms(
-                        #     crop_left,
-                        #     range_depth=range_depth,
-                        #     range_depth_crop=x_sample,
-                        #     image_height=64,
-                        #     image_width=512,
-                        #     # mask=~mask[..., 0].astype(bool),
-                        # )
+    if opt.compute_metrics:
+        for score_name in metrics:
+            metrics[score_name] = np.mean(metrics[score_name])
 
-                        # cv2.imwrite(os.path.join(lidar_path, segment_id_batch[i] + "_lidar.png"), lidar_vis[:, :, ::-1])
-                        # cv2.imwrite(os.path.join(lidar_path, segment_id_batch[i] + "_lidar_new.png"), lidar_vis_new[:, :, ::-1])
-
-                        # if opt.compute_metrics:
-                        #     global_cd = pcu.chamfer_distance(points, points_new)
-
-                        #     mask_points = points_in_bbox_corners(points, bbox_3d[None])
-                        #     object_points = points[mask_points[:, 0]]
-                        #     mask_points = points_in_bbox_corners(points_new, bbox_3d[None])
-                        #     object_points_new = points_new[mask_points[:, 0]]
-
-                        #     if len(object_points_new) == 0:
-                        #         object_cd = -1
-                        #     else:
-                        #         object_cd = pcu.chamfer_distance(object_points, object_points_new)
-                        #         metrics["object_CD"][batch["ref_class"][i]].append(object_cd)
-                        #         metrics["global_CD"][batch["ref_class"][i]].append(global_cd)
-
-                        #     segment_id_batch[i] = segment_id_batch[i] + f"_CD_g{global_cd:.2f}_l{object_cd:.2f}"
-
-    # for score_name in metrics:
-    #     for class_name in metrics[score_name]:
-    #         metrics[score_name][class_name] = np.mean(metrics[score_name][class_name])
-
-    for score_name in metrics:
-        metrics[score_name] = np.mean(metrics[score_name])
-
-    metrics_df = pd.DataFrame(metrics, index=["mean L1"])
-    metrics_df.to_csv(os.path.join(outpath, "metrics.csv"))
+        metrics_df = pd.DataFrame(metrics, index=["mean L1"])
+        metrics_df.to_csv(os.path.join(outpath, "metrics.csv"))
 
     print(f"Your samples are ready and waiting for you here: \n{outpath} \n"
           f" \nEnjoy.")
