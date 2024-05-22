@@ -590,14 +590,14 @@ class LatentDiffusion(DDPM):
         denoise_grid = make_grid(denoise_grid, nrow=n_imgs_per_row)
         return denoise_grid
 
-    def get_first_stage_encoding(self, encoder_posterior):
+    def get_first_stage_encoding(self, encoder_posterior, scale_factor=1):
         if isinstance(encoder_posterior, DiagonalGaussianDistribution):
             z = encoder_posterior.sample()
         elif isinstance(encoder_posterior, torch.Tensor):
             z = encoder_posterior
         else:
             raise NotImplementedError(f"encoder_posterior of type '{type(encoder_posterior)}' not yet implemented")
-        return self.scale_factor * z
+        return scale_factor * z
 
     def get_learned_conditioning(self, c):
         if self.cond_stage_forward is None:
@@ -827,7 +827,8 @@ class LatentDiffusion(DDPM):
             z = module.quantize.get_codebook_entry(z, shape=None)
             z = rearrange(z, 'b h w c -> b c h w').contiguous()
 
-        z = 1. / self.scale_factor * z
+        if module_name == "first_stage_model":
+            z = 1. / self.scale_factor * z
 
         if hasattr(self, "split_input_params"):
             if self.split_input_params["patch_distributed_vq"]:
@@ -892,7 +893,8 @@ class LatentDiffusion(DDPM):
             z = module.quantize.get_codebook_entry(z, shape=None)
             z = rearrange(z, 'b h w c -> b c h w').contiguous()
 
-        z = 1. / self.scale_factor * z
+        if module_name == "first_stage_model":
+            z = 1. / self.scale_factor * z
 
         if hasattr(self, "split_input_params"):
             if self.split_input_params["patch_distributed_vq"]:
@@ -991,12 +993,12 @@ class LatentDiffusion(DDPM):
         if self.use_camera:
             encoder_posterior = self.encode_first_stage(image_gt)
             # B x 4 x 64 x 64
-            z = self.get_first_stage_encoding(encoder_posterior).detach()
+            z = self.get_first_stage_encoding(encoder_posterior, scale_factor=self.scale_factor).detach()
             # pad with zeros -> B x 8 x 64 x 64
             z = torch.cat((z, torch.zeros_like(z)), dim=1)
 
             encoder_posterior_inpaint = self.encode_first_stage(image_inpaint)
-            z_inpaint = self.get_first_stage_encoding(encoder_posterior_inpaint).detach()
+            z_inpaint = self.get_first_stage_encoding(encoder_posterior_inpaint, scale_factor=self.scale_factor).detach()
             z_inpaint = torch.cat((z_inpaint, torch.zeros_like(z_inpaint)), dim=1)
 
             mask_resize = Resize([z.shape[-1], z.shape[-1]])(image_mask)
