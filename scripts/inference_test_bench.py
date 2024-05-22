@@ -277,6 +277,7 @@ def main():
         test_dataset = instantiate_from_config(test_data_config)
     elif opt.compute_metrics:
         test_data_config = config.data.params.validation
+        test_data_config['params']['ref_aug'] = False
         test_dataset = instantiate_from_config(test_data_config)
     else:
         test_data_config = config.data.params.test
@@ -378,16 +379,16 @@ def main():
                     log, lidar_metrics = model.log_data(batch, data, h_camera, h_lidar, log_metrics=False)
 
                     if model.use_camera:
-                        pred_grid = log["image_preds"].cpu().numpy()[..., ::-1]
+                        pred_grid = log["image_preds"].cpu().numpy()
                         for i in range(batch_size):
-                            cv2.imwrite(os.path.join(camera_path, 'grid-' + segment_id_batch[i] + '_img.png'), pred_grid[i])
+                            grid_vis = pred_grid[i].transpose(1, 2, 0)[..., ::-1]
+                            cv2.imwrite(os.path.join(camera_path, 'grid-' + segment_id_batch[i] + '_img.png'), grid_vis)
 
                     if model.use_lidar:
-                        pred_grid = log["lidar_preds"].cpu().numpy()[..., ::-1]
-                        rec_grid = log["lidar_input-rec"].cpu().numpy()[..., ::-1]
+                        pred_grid = log["lidar_input-pred-rec"].cpu().numpy()
                         for i in range(batch_size):
-                            cv2.imwrite(os.path.join(lidar_path, 'grid-' + segment_id_batch[i] + '_lidar.png'), pred_grid[i])
-                            cv2.imwrite(os.path.join(lidar_path, 'grid-' + segment_id_batch[i] + '_lidar_rec.png'), rec_grid[i])
+                            grid_vis = pred_grid[i].transpose(1, 2, 0)[..., ::-1]
+                            cv2.imwrite(os.path.join(lidar_path, 'grid-' + segment_id_batch[i] + '_lidar.png'), grid_vis)
 
                         if opt.compute_metrics:
                             for k, v in lidar_metrics.items():
