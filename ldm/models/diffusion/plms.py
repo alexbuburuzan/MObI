@@ -214,13 +214,14 @@ class PLMSSampler(object):
                 noise = torch.nn.functional.dropout(noise, p=noise_dropout)
             x_prev = a_prev.sqrt() * pred_x0 + dir_xt + noise
             return x_prev, pred_x0
-        kwargs=kwargs['test_model_kwargs']
-        x_new=torch.cat([x,kwargs['inpaint_image'],kwargs['inpaint_mask']],dim=1)
+
+        x_new = torch.cat([x, kwargs['inpaint_image'], kwargs['inpaint_mask']], dim=1)
         e_t = get_model_output(x_new, t)
+
         if len(old_eps) == 0:
             # Pseudo Improved Euler (2nd order)
             x_prev, pred_x0 = get_x_prev_and_pred_x0(e_t, index)
-            x_prev_new=torch.cat([x_prev,kwargs['inpaint_image'],kwargs['inpaint_mask']],dim=1)
+            x_prev_new=torch.cat([x_prev, kwargs['inpaint_image'], kwargs['inpaint_mask']], dim=1)
             e_t_next = get_model_output(x_prev_new, t_next)
             e_t_prime = (e_t + e_t_next) / 2
         elif len(old_eps) == 1:

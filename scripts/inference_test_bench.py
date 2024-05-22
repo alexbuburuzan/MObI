@@ -109,6 +109,15 @@ def check_safety(x_image):
     return x_checked_image, has_nsfw_concept
 
 
+def move_to_device(batch, device):
+        for k in batch:
+            if isinstance(batch[k], torch.Tensor):
+                batch[k] = batch[k].to(device)
+            elif isinstance(batch[k], dict):
+                batch[k] = move_to_device(batch[k], device)
+        return batch
+
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -148,11 +157,6 @@ def main():
         help="use plms sampling",
     )
     parser.add_argument(
-        "--laion400m",
-        action='store_true',
-        help="uses the LAION400M model",
-    )
-    parser.add_argument(
         "--fixed_code",
         action='store_true',
         help="if enabled, uses the same starting code across samples ",
@@ -168,30 +172,6 @@ def main():
         type=int,
         default=2,
         help="sample this often",
-    )
-    parser.add_argument(
-        "--H",
-        type=int,
-        default=512,
-        help="image height, in pixel space",
-    )
-    parser.add_argument(
-        "--W",
-        type=int,
-        default=512,
-        help="image width, in pixel space",
-    )
-    parser.add_argument(
-        "--C",
-        type=int,
-        default=4,
-        help="latent channels",
-    )
-    parser.add_argument(
-        "--f",
-        type=int,
-        default=8,
-        help="downsampling factor",
     )
     parser.add_argument(
         "--n_samples",
@@ -253,17 +233,11 @@ def main():
         help="insert object for rotated bbox",
     )
     parser.add_argument(
-        "--compute_cd",
+        "--compute_metrics",
         action="store_true",
-        help="compute Chamfer Distance",
+        help="compute metrics",
     )
     opt = parser.parse_args()
-
-    if opt.laion400m:
-        print("Falling back to LAION 400M model...")
-        opt.config = "configs/latent-diffusion/txt2img-1p4B-eval.yaml"
-        opt.ckpt = "models/ldm/text2img-large/model.ckpt"
-        opt.outdir = "outputs/txt2img-samples-laion400m"
 
     seed_everything(opt.seed)
 
@@ -293,21 +267,15 @@ def main():
             data = f.read().splitlines()
             data = list(chunk(data, batch_size))
 
-    sample_path = os.path.join(outpath, "samples")
     lidar_path = os.path.join(outpath, "lidar")
-    result_path = os.path.join(outpath, "results")
-    grid_path=os.path.join(outpath, "grid")
-    os.makedirs(sample_path, exist_ok=True)
-    os.makedirs(result_path, exist_ok=True)
-    os.makedirs(grid_path, exist_ok=True)
+    camera_path = os.path.join(outpath, "camera")
+    os.makedirs(camera_path, exist_ok=True)
     os.makedirs(lidar_path, exist_ok=True)
-    base_count = len(os.listdir(sample_path))
-    grid_count = len(os.listdir(outpath)) - 1
 
     if opt.rotation_test:
         test_data_config = config.data.params.rotation_test
         test_dataset = instantiate_from_config(test_data_config)
-    elif opt.compute_cd:
+    elif opt.compute_metrics:
         test_data_config = config.data.params.validation
         test_dataset = instantiate_from_config(test_data_config)
     else:
@@ -356,19 +324,11 @@ def main():
         drop_last=True
     )
 
-    if test_data_config['params']['use_lidar']:
-        resize = Resize([256, 256])
-    else:
-        resize = Resize([450, 800])
-
-    metrics = {
-        "object_CD": {c: [] for c in test_data_config['params']['object_classes']},
-        "global_CD": {c: [] for c in test_data_config['params']['object_classes']},
-    }
+    metrics = {}
 
     start_code = None
     if opt.fixed_code:
-        start_code = torch.randn([opt.n_samples, opt.C, opt.H // opt.f, opt.W // opt.f], device=device)
+        start_code = torch.randn([opt.n_samples, model.channels, model.image_size, model.image_size], device=device)
 
     precision_scope = autocast if opt.precision=="autocast" else nullcontext
     with torch.no_grad():
@@ -382,149 +342,97 @@ def main():
                         seed_everything(opt.seed)
 
                     segment_id_batch = batch["id_name"]
-                    image_tensor = batch["GT"]
-                    test_model_kwargs = {k: v for k, v in batch.items() if k in ["inpaint_image", "inpaint_mask"]}
-                    test_model_kwargs = {n: test_model_kwargs[n].to(device,non_blocking=True) for n in test_model_kwargs}
-                    cond = batch["cond"]
-                    cond = {k: v.to(device,non_blocking=True) for k, v in cond.items() if k in model.cond_stage_key}
+                    batch = move_to_device(batch, device)
+
+                    data = model.get_input(
+                        batch,
+                        model.first_stage_key,
+                        force_c_encode=True,
+                        return_vae_rec=True,
+                    )
 
                     uc = None
                     if opt.scale != 1.0:
-                        uc = [model.learnable_vector.repeat(image_tensor.shape[0],1,1)]
+                        uc = [model.learnable_vector.repeat(data['z'].shape[0],1,1)]
                         if "ref_bbox" in model.cond_stage_key:
-                            uc.append(model.bbox_uncond_vector.repeat(image_tensor.shape[0],1,1))
+                            uc.append(model.bbox_uncond_vector.repeat(data['z'].shape[0],1,1))
                         uc = torch.cat(uc, dim=1)
-                    c = model.get_learned_conditioning(cond)
+                    c = data["cond"]
 
-                    inpaint_image=test_model_kwargs['inpaint_image']
-                    inpaint_mask=test_model_kwargs['inpaint_mask']
-                    z_inpaint = model.encode_first_stage(test_model_kwargs['inpaint_image'])
-                    z_inpaint = model.get_first_stage_encoding(z_inpaint).detach()
-                    test_model_kwargs['inpaint_image'] = z_inpaint
-                    test_model_kwargs['inpaint_mask'] = Resize([z_inpaint.shape[-1],z_inpaint.shape[-1]])(test_model_kwargs['inpaint_mask'])
-
-                    shape = [opt.C, opt.H // opt.f, opt.W // opt.f]
-                    samples_ddim, _ = sampler.sample(
+                    shape = [model.channels, model.image_size, model.image_size]
+                    samples, _ = sampler.sample(
                         S=opt.ddim_steps,
                         conditioning=c,
-                        batch_size=opt.n_samples,
+                        batch_size=data["z"].shape[0],
                         shape=shape,
                         verbose=False,
                         unconditional_guidance_scale=opt.scale,
                         unconditional_conditioning=uc,
                         eta=opt.ddim_eta,
                         x_T=start_code,
-                        test_model_kwargs=test_model_kwargs
+                        inpaint_image=data["z"][:,8:16],
+                        inpaint_mask=data["z"][:,[16]]
                     )
 
-                    x_samples_ddim = model.decode_first_stage(samples_ddim)
-                    x_samples_ddim = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
-                    x_samples_ddim = x_samples_ddim.cpu().permute(0, 2, 3, 1).numpy()
+                    h_camera, h_lidar = model.decode_sample(samples, data.get("z_lidar"))
+                    log, lidar_metrics = model.log_data(batch, data, h_camera, h_lidar, log_metrics=False)
 
-                    x_checked_image=x_samples_ddim
-                    x_checked_image_torch = torch.from_numpy(x_checked_image).permute(0, 3, 1, 2)
+                    if model.use_camera:
+                        pred_grid = log["image_preds"].cpu().numpy()[..., ::-1]
+                        for i in range(batch_size):
+                            cv2.imwrite(os.path.join(camera_path, 'grid-' + segment_id_batch[i] + '_img.png'), pred_grid[i])
 
-                    def un_norm(x):
-                        return (resize(x)+1.0)/2.0
-                    def un_norm_clip(x):
-                        x = resize(x)
-                        x[0,:,:] = x[0,:,:] * 0.26862954 + 0.48145466
-                        x[1,:,:] = x[1,:,:] * 0.26130258 + 0.4578275
-                        x[2,:,:] = x[2,:,:] * 0.27577711 + 0.40821073
-                        return x
+                    if model.use_lidar:
+                        pred_grid = log["lidar_preds"].cpu().numpy()[..., ::-1]
+                        rec_grid = log["lidar_input-rec"].cpu().numpy()[..., ::-1]
+                        for i in range(batch_size):
+                            cv2.imwrite(os.path.join(lidar_path, 'grid-' + segment_id_batch[i] + '_lidar.png'), pred_grid[i])
+                            cv2.imwrite(os.path.join(lidar_path, 'grid-' + segment_id_batch[i] + '_lidar_rec.png'), rec_grid[i])
 
-                    if not opt.skip_save:
-                        for i,x_sample in enumerate(x_checked_image_torch):
-                            ref_bbox = batch['bbox_image_coords'][i].cpu().numpy()
-                            bbox_3d = batch['bbox_3d'][i].cpu().numpy()
+                        if opt.compute_metrics:
+                            for k, v in lidar_metrics.items():
+                                if k not in metrics:
+                                    metrics[k] = []
+                                metrics[k].append(v.item())
 
-                            GT_img = un_norm(image_tensor[i]).cpu().numpy().transpose(1, 2, 0)
-                            GT_img = (GT_img * 255).astype(np.uint8)[..., ::-1]
-                            GT_img = draw_projected_bbox(GT_img, ref_bbox)
+                        # lidar_converter = LidarConverter()
+                        # range_depth_new, _ = lidar_converter.undo_default_transforms(
+                        #     crop_left,
+                        #     range_depth=range_depth,
+                        #     range_depth_crop=x_sample,
+                        #     image_height=64,
+                        #     image_width=512,
+                        #     # mask=~mask[..., 0].astype(bool),
+                        # )
 
-                            inpaint_img = un_norm(inpaint_image[i]).cpu().numpy().transpose(1, 2, 0)
-                            inpaint_img = (inpaint_img * 255).astype(np.uint8)[..., ::-1]
-                            inpaint_img = draw_projected_bbox(inpaint_img, ref_bbox)
+                        # cv2.imwrite(os.path.join(lidar_path, segment_id_batch[i] + "_lidar.png"), lidar_vis[:, :, ::-1])
+                        # cv2.imwrite(os.path.join(lidar_path, segment_id_batch[i] + "_lidar_new.png"), lidar_vis_new[:, :, ::-1])
 
-                            ref_image = cond['ref_image'].squeeze(1)
-                            ref_image = un_norm_clip(ref_image[i]).cpu().numpy().transpose(1, 2, 0)
-                            ref_image = (ref_image * 255).astype(np.uint8)[..., ::-1]
+                        # if opt.compute_metrics:
+                        #     global_cd = pcu.chamfer_distance(points, points_new)
 
-                            pred_img = resize(x_sample).cpu().numpy().transpose(1, 2, 0)
-                            pred_img = (pred_img * 255).astype(np.uint8)[..., ::-1]
-                            pred_img = draw_projected_bbox(pred_img, ref_bbox)
+                        #     mask_points = points_in_bbox_corners(points, bbox_3d[None])
+                        #     object_points = points[mask_points[:, 0]]
+                        #     mask_points = points_in_bbox_corners(points_new, bbox_3d[None])
+                        #     object_points_new = points_new[mask_points[:, 0]]
 
-                            mask = inpaint_mask[i].cpu().numpy().transpose(1, 2, 0)
+                        #     if len(object_points_new) == 0:
+                        #         object_cd = -1
+                        #     else:
+                        #         object_cd = pcu.chamfer_distance(object_points, object_points_new)
+                        #         metrics["object_CD"][batch["ref_class"][i]].append(object_cd)
+                        #         metrics["global_CD"][batch["ref_class"][i]].append(global_cd)
 
-                            if test_data_config['params']['use_lidar']:
-                                range_depth = batch["range_depth"][i].cpu().numpy()
-                                range_int = batch["range_int"][i].cpu().numpy()
-                                crop_left = batch["crop_left"][i].item()
+                        #     segment_id_batch[i] = segment_id_batch[i] + f"_CD_g{global_cd:.2f}_l{object_cd:.2f}"
 
-                                lidar_converter = LidarConverter()
-                                range_depth_new, _ = lidar_converter.undo_default_transforms(
-                                    crop_left,
-                                    range_depth=range_depth,
-                                    range_depth_crop=np.mean(x_sample.cpu().numpy(), axis=0) * 2 - 1,
-                                    image_height=x_sample.shape[-2],
-                                    image_width=x_sample.shape[-1],
-                                    mask=~mask[..., 0].astype(bool),
-                                )
-
-                                points_new, _ = lidar_converter.range2pcd(range_depth_new)
-                                points, _ = lidar_converter.range2pcd(range_depth)
-
-                                points, _ = focus_on_bbox(points, bbox_3d)
-                                points_new, bbox_3d = focus_on_bbox(points_new, bbox_3d)
-
-                                lidar_vis_new = visualize_lidar(points_new, bboxes=bbox_3d)
-                                lidar_vis = visualize_lidar(points, bboxes=bbox_3d)
-
-                                if opt.compute_cd:
-                                    global_cd = pcu.chamfer_distance(points, points_new)
-
-                                    mask_points = points_in_bbox_corners(points, bbox_3d[None])
-                                    object_points = points[mask_points[:, 0]]
-                                    mask_points = points_in_bbox_corners(points_new, bbox_3d[None])
-                                    object_points_new = points_new[mask_points[:, 0]]
-
-                                    if len(object_points_new) == 0:
-                                        object_cd = -1
-                                    else:
-                                        object_cd = pcu.chamfer_distance(object_points, object_points_new)
-                                        metrics["object_CD"][batch["ref_class"][i]].append(object_cd)
-                                        metrics["global_CD"][batch["ref_class"][i]].append(global_cd)
-
-                                    segment_id_batch[i] = segment_id_batch[i] + f"_CD_g{global_cd:.2f}_l{object_cd:.2f}"
-
-                                # cv2.imwrite(os.path.join(lidar_path, segment_id_batch[i] + "_lidar.png"), lidar_vis[:, :, ::-1])
-                                # cv2.imwrite(os.path.join(lidar_path, segment_id_batch[i] + "_lidar_new.png"), lidar_vis_new[:, :, ::-1])
-
-                            all_img=[GT_img, inpaint_img, ref_image, pred_img]
-                            img_grid = np.concatenate(all_img, axis=1)
-
-                            if test_data_config['params']['use_lidar']:
-                                all_lidar = [lidar_vis, lidar_vis_new]
-                                lidar_grid = np.concatenate(all_lidar, axis=1)
-                                cv2.imwrite(os.path.join(grid_path, 'grid-' + segment_id_batch[i] + '_lidar.png'), lidar_grid[..., ::-1])
-
-                            # cv2.imwrite(os.path.join(sample_path, segment_id_batch[i] + "_GT.png"), GT_img)
-                            # cv2.imwrite(os.path.join(sample_path, segment_id_batch[i] + "_inpaint.png"), inpaint_img)
-                            # cv2.imwrite(os.path.join(sample_path, segment_id_batch[i] + "_ref.png"), ref_image)
-                            # cv2.imwrite(os.path.join(result_path, segment_id_batch[i] + ".png"), pred_img)
-                            # cv2.imwrite(os.path.join(sample_path, segment_id_batch[i] + "_mask.png"), mask)
-                            cv2.imwrite(os.path.join(grid_path, 'grid-' + segment_id_batch[i] + '_img.png'), img_grid)
-                            base_count += 1
-
-                    if not opt.skip_grid:
-                        all_samples.append(x_checked_image_torch)
+    # for score_name in metrics:
+    #     for class_name in metrics[score_name]:
+    #         metrics[score_name][class_name] = np.mean(metrics[score_name][class_name])
 
     for score_name in metrics:
-        for class_name in metrics[score_name]:
-            metrics[score_name][class_name] = np.mean(metrics[score_name][class_name])
+        metrics[score_name] = np.mean(metrics[score_name])
 
-    metrics_df = pd.DataFrame(metrics)
-    metrics_df.loc["average"] = metrics_df.mean()
+    metrics_df = pd.DataFrame(metrics, index=["mean L1"])
     metrics_df.to_csv(os.path.join(outpath, "metrics.csv"))
 
     print(f"Your samples are ready and waiting for you here: \n{outpath} \n"

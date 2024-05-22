@@ -450,7 +450,7 @@ def points_in_rbbox(points, rbbox, z_axis=2, origin=(0.5, 0.5, 0)):
     indices = points_in_convex_polygon_3d_jit(points[:, :3], surfaces)
     return indices
 
-def points_in_bbox_corners(points, rbbox_corners, z_axis=2, origin=(0.5, 0.5, 0)):
+def points_in_bbox_corners(points, rbbox_corners):
     """Check points in rotated bbox and return indicces.
 
     Args:
