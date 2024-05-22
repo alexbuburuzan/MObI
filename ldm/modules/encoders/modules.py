@@ -1,14 +1,10 @@
 import torch
 import torch.nn as nn
 from functools import partial
-import clip
 import logging
-from einops import rearrange, repeat
-from transformers import CLIPTokenizer, CLIPTextModel,CLIPVisionModel,CLIPModel
-import kornia
+from transformers import CLIPVisionModel
 from ldm.modules.x_transformer import Encoder, TransformerWrapper  # TODO: can we directly rely on lucidrains code and simply add this as a reuirement? --> test
 from .xf import LayerNorm, Transformer
-import math
 
 class AbstractEncoder(nn.Module):
     def __init__(self):
