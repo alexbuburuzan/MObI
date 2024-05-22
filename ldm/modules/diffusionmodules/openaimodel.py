@@ -638,7 +638,19 @@ class UNetModel(nn.Module):
         self.use_lidar = use_lidar
 
         if use_lidar:
-            self.lidar_in = conv_nd(dims, 17, model_channels, 3, padding=1)
+            self.lidar_in = TimestepEmbedSequential(
+                conv_nd(dims, 17, model_channels, 3, padding=1),
+                ResBlock(
+                    model_channels,
+                    time_embed_dim,
+                    dropout,
+                    out_channels=model_channels,
+                    dims=dims,
+                    use_checkpoint=use_checkpoint,
+                    use_scale_shift_norm=use_scale_shift_norm,
+                )
+            )
+
 
         if self.add_conv_in_front_of_unet:
             self.add_resbolck = nn.ModuleList(
@@ -899,12 +911,12 @@ class UNetModel(nn.Module):
 
             h = cat_interleave([
                 self.input_blocks[0](h_camera, emb[::2], context[::2]),
-                self.lidar_in(h_lidar),
+                self.lidar_in(h_lidar, emb[1::2], context[1::2]),
             ])
         elif self.use_camera:
             h = self.input_blocks[0](h[:, [0, 1, 2, 3, 8, 9, 10, 11, 16]], emb, context)
         elif self.use_lidar:
-            h = self.lidar_in(h)
+            h = self.lidar_in(h, emb, context)
         hs.append(h)
 
         for module in self.input_blocks[1:]:
