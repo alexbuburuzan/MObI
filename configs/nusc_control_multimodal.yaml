@@ -1,11 +1,13 @@
-latent_size: 32
 use_camera: True
-use_lidar: True
-image_height: 256
-image_width: 256
+use_lidar: False
+
+image_height: 512
+image_width: 512
 range_height: 64
-range_width: 256
-batch_size: 2
+range_width: 512
+latent_size: 64 # image_wifth // 8 and range_width // 8
+
+batch_size: 1
 
 classes:
   - car
@@ -138,7 +140,7 @@ data:
               object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_train.csv
               scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_train.pkl
               expand_mask_ratio: 0.1
-              expand_ref_ratio: 0.1
+              expand_ref_ratio: 0
               camera_visibility_min: 0.7
               ref_aug: True
               ref_mode: same-ref
@@ -150,7 +152,7 @@ data:
               reference_image_min_h: 200
               frustum_iou_max: 0.5
               object_classes: ${classes}
-              random_range_crop: True
+              random_range_crop: False
       validation:
           target: ldm.data.nuscenes.NuScenesDataset
           params:
@@ -160,7 +162,7 @@ data:
               object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.csv
               scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
               expand_mask_ratio: 0.1
-              expand_ref_ratio: 0.1
+              expand_ref_ratio: 0
               camera_visibility_min: 0.7
               ref_aug: True
               ref_mode: same-ref
@@ -172,7 +174,7 @@ data:
               reference_image_min_h: 200
               frustum_iou_max: 0.5
               object_classes: ${classes}
-              random_range_crop: True
+              random_range_crop: False
       test:
           target: ldm.data.nuscenes.NuScenesDataset
           params:
@@ -182,7 +184,7 @@ data:
               object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.csv
               scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
               expand_mask_ratio: 0.1
-              expand_ref_ratio: 0.1
+              expand_ref_ratio: 0
               camera_visibility_min: 0.7
               ref_aug: False
               ref_mode: same-ref
@@ -203,7 +205,7 @@ data:
               object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.csv
               scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
               expand_mask_ratio: 0.1
-              expand_ref_ratio: 0.1
+              expand_ref_ratio: 0
               camera_visibility_min: 0.7
               ref_aug: False
               prob_use_3d_edit_mask: 1
