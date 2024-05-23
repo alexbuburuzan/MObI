@@ -804,6 +804,7 @@ class LatentDiffusion(DDPM):
 
             # Align bbox with cropped lidar feature map
             lidar_data["cond"]["ref_bbox"][..., 0] = (lidar_data["cond"]["ref_bbox"][..., 0] * W - left) / self.image_size
+            lidar_data["cond"]["ref_bbox"][..., 1] += pad / self.image_size
             c, _ = self.process_conditioning(lidar_data["cond"], force_c_encode=force_c_encode)
             out["cond"].append(c)
             out["z_lidar"] = z_lidar[:, :8, ...]
