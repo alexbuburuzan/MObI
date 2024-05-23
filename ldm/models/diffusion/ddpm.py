@@ -502,7 +502,7 @@ class LatentDiffusion(DDPM):
             self.init_from_ckpt(ckpt_path, ignore_keys)
             self.restarted_from_ckpt = True
 
-        self.range_l1_metric = nn.L1Loss()
+        self.range_l1_metric = nn.L1Loss(reduction='none')
 
     def make_cond_schedule(self, ):
         self.cond_ids = torch.full(size=(self.num_timesteps,), fill_value=self.num_timesteps - 1, dtype=torch.long)
@@ -1495,14 +1495,30 @@ class LatentDiffusion(DDPM):
             log["range_input-rec"] = torch.cat([input, rec], dim=-2)
 
             # Compute metrics
-            lidar_metrics = {
-                "object_pred_L1" : self.range_l1_metric(sample[instance_mask == 1], input[instance_mask == 1]),
-                "object_rec_L1" : self.range_l1_metric(rec[instance_mask == 1], input[instance_mask == 1]),
-                "mask_pred_L1" : self.range_l1_metric(sample[mask == 0], input[mask == 0]),
-                "mask_rec_L1" : self.range_l1_metric(rec[mask == 0], input[mask == 0]),
-                "full_pred_L1" : self.range_l1_metric(sample, input),
-                "full_rec_L1" : self.range_l1_metric(rec, input),
-            }
+            lidar_metrics = {}
+            for pred_name, pred in {"sample": sample, "rec": rec}.items():
+                for reduction in ["mean", "median"]:
+                    B = pred.shape[0]
+                    object_scores, mask_scores, full_scores = [], [], []
+                    for i in range(B):
+                        object_dist = self.range_l1_metric(pred[i][instance_mask[i] == 1], input[i][instance_mask[i] == 1]).flatten()
+                        mask_dist = self.range_l1_metric(pred[i][mask[i] == 0], input[i][mask[i] == 0]).flatten()
+                        full_dist = self.range_l1_metric(pred[i], input[i]).flatten()
+
+                        if reduction == "mean":
+                            object_scores.append(object_dist.mean().item())
+                            mask_scores.append(mask_dist.mean().item())
+                            full_scores.append(full_dist.mean().item())
+                        else:
+                            object_scores.append(object_dist.median().item())
+                            mask_scores.append(mask_dist.median().item())
+                            full_scores.append(full_dist.median().item())
+
+                    lidar_metrics.update({
+                        f"{reduction}/object_{pred_name}_L1" : np.mean(object_scores),
+                        f"{reduction}/mask_{pred_name}_L1" : np.mean(mask_scores),
+                        f"{reduction}/full_{pred_name}_L1" : np.mean(full_scores),
+                    })
 
             # Make metrics more interpretable by scaling them to the original range
             lidar_metrics = {f"{split}/{k}": v * 25.6 for k, v in lidar_metrics.items()}

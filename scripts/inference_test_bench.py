@@ -380,7 +380,7 @@ def main():
                     )
 
                     h_camera, h_lidar = model.decode_sample(samples, data.get("z_lidar"))
-                    log, lidar_metrics = model.log_data(batch, data, h_camera, h_lidar, log_metrics=False)
+                    log, lidar_metrics = model.log_data(batch, data, h_camera, h_lidar, log_metrics=False, split="test")
 
                     if model.use_camera:
                         if opt.save_samples:
