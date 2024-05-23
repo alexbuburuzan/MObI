@@ -793,9 +793,15 @@ class LatentDiffusion(DDPM):
 
             W = z_lidar.shape[-1]
             left, right = W // 2 - self.image_size // 2, W // 2 + self.image_size // 2
+            pad = (self.image_size - z_lidar.shape[-2]) // 2
+            # out["z"].append(
+            #     F.interpolate(z_lidar[..., left:right], size=self.image_size, mode="nearest")
+            # )
+            # pad top and bottom instead of resize
             out["z"].append(
-                F.interpolate(z_lidar[..., left:right], size=self.image_size, mode="bilinear")
+                F.pad(z_lidar[..., left:right], (0, 0, pad, pad), mode="constant", value=0)
             )
+
             # Align bbox with cropped lidar feature map
             lidar_data["cond"]["ref_bbox"][..., 0] = (lidar_data["cond"]["ref_bbox"][..., 0] * W - left) / self.image_size
             c, _ = self.process_conditioning(lidar_data["cond"], force_c_encode=force_c_encode)
@@ -1408,7 +1414,10 @@ class LatentDiffusion(DDPM):
 
         if self.use_camera and self.use_lidar:
             h_camera = sample[::2][:, :4, :, :]
-            h_lidar = F.interpolate(sample[1::2], size=(z_lidar.shape[-2], self.image_size), mode='bilinear')
+            # h_lidar = F.interpolate(sample[1::2], size=(z_lidar.shape[-2], self.image_size), mode='nearest')
+            bottom = (sample[1::2].shape[-2] - z_lidar.shape[-2]) // 2
+            top = bottom + z_lidar.shape[-2]
+            h_lidar = sample[1::2][:, :, bottom:top, :]
 
             if self.image_size != z_lidar.shape[-1]:
                 # Undo lidar latent crop
@@ -1417,7 +1426,10 @@ class LatentDiffusion(DDPM):
         elif self.use_camera:
             h_camera = sample[:, :4, :, :]
         else:
-            h_lidar = F.interpolate(sample, size=(z_lidar.shape[-2], self.image_size), mode='bilinear')
+            # h_lidar = F.interpolate(sample, size=(z_lidar.shape[-2], self.image_size), mode='nearest')
+            bottom = (sample[1::2].shape[-2] - z_lidar.shape[-2]) // 2
+            top = bottom + z_lidar.shape[-2]
+            h_lidar = sample[:, :, bottom:top, :]
 
             if self.image_size != z_lidar.shape[-1]:
                 # Undo lidar latent crop
