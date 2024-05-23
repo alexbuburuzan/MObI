@@ -165,7 +165,7 @@ def main():
         "--ddim_eta",
         type=float,
         default=0.0,
-        help="ddim eta (eta=0.0 corresponds to deterministic sampling",
+        help="ddim eta eta=0.0 corresponds to deterministic sampling",
     )
     parser.add_argument(
         "--n_iter",
@@ -236,6 +236,10 @@ def main():
         "--compute_metrics",
         action="store_true",
         help="compute metrics",
+    )
+    parser.add_argument(
+        "--save_samples",
+        action="store_true",
     )
     opt = parser.parse_args()
 
@@ -379,16 +383,18 @@ def main():
                     log, lidar_metrics = model.log_data(batch, data, h_camera, h_lidar, log_metrics=False)
 
                     if model.use_camera:
-                        pred_grid = log["image_preds"].cpu().numpy()
-                        for i in range(batch_size):
-                            grid_vis = pred_grid[i].transpose(1, 2, 0)[..., ::-1]
-                            cv2.imwrite(os.path.join(camera_path, 'grid-' + segment_id_batch[i] + '_img.png'), grid_vis)
+                        if opt.save_samples:
+                            pred_grid = log["image_preds"].cpu().numpy()
+                            for i in range(batch_size):
+                                grid_vis = pred_grid[i].transpose(1, 2, 0)[..., ::-1]
+                                cv2.imwrite(os.path.join(camera_path, 'grid-' + segment_id_batch[i] + '_img.png'), grid_vis)
 
                     if model.use_lidar:
-                        pred_grid = log["lidar_input-pred-rec"].cpu().numpy()
-                        for i in range(batch_size):
-                            grid_vis = pred_grid[i].transpose(1, 2, 0)[..., ::-1]
-                            cv2.imwrite(os.path.join(lidar_path, 'grid-' + segment_id_batch[i] + '_lidar.png'), grid_vis)
+                        if opt.save_samples:
+                            pred_grid = log["lidar_input-pred-rec"].cpu().numpy()
+                            for i in range(batch_size):
+                                grid_vis = pred_grid[i].transpose(1, 2, 0)[..., ::-1]
+                                cv2.imwrite(os.path.join(lidar_path, 'grid-' + segment_id_batch[i] + '_lidar.png'), grid_vis)
 
                         if opt.compute_metrics:
                             for k, v in lidar_metrics.items():
