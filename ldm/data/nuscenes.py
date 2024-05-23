@@ -282,6 +282,7 @@ class NuScenesDataset(data.Dataset):
         bbox_range_coords = bbox_range_coords.astype(np.float32)
         bbox_range_coords[..., 0] /= self.range_width
         bbox_range_coords[..., 1] /= self.range_height
+        center_depth = bbox_range_coords[:, 2].mean()
 
         # Mask
         range_mask = get_range_inpaint_mask(
@@ -291,7 +292,7 @@ class NuScenesDataset(data.Dataset):
         range_instance_mask = torch.tensor(range_instance_mask).float().unsqueeze(0)
 
         # Inpainted range
-        range_depth_inpaint = range_depth.clone() * range_mask
+        range_depth_inpaint = range_depth.clone() * range_mask + (1 - range_mask) * center_depth
         range_int_inpaint = range_int.clone() * range_mask
 
         data = {
