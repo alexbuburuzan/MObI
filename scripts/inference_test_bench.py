@@ -403,11 +403,16 @@ def main():
                                 metrics[k].append(v.item())
 
     if opt.compute_metrics:
+        df = {"mean" : {}, "median" : {}}
         for score_name in metrics:
             metrics[score_name] = np.mean(metrics[score_name])
+            if "mean" in score_name:
+                df["mean"][score_name.split("/")[-1]] = metrics[score_name]
+            elif "median" in score_name:
+                df["median"][score_name.split("/")[-1]] = metrics[score_name]
 
-        metrics_df = pd.DataFrame(metrics, index=["mean L1"])
-        metrics_df.to_csv(os.path.join(outpath, "metrics.csv"))
+        df = pd.DataFrame(df)
+        df.to_csv(os.path.join(outpath, "metrics.csv"))
 
     print(f"Your samples are ready and waiting for you here: \n{outpath} \n"
           f" \nEnjoy.")

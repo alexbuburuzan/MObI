@@ -63,8 +63,8 @@ class NuScenesDataset(data.Dataset):
         range_width=1024,
         reference_image_min_h=40,
         reference_image_min_w=40,
-        frustum_iou_max=0.7,
-        camera_visibility_min=0.5,
+        frustum_iou_max=0.5,
+        camera_visibility_min=0.7,
         rot_every_angle=0,
         rot_test_scene=None, # used for rotation test
         use_lidar=False,
