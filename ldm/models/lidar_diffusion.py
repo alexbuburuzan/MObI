@@ -110,7 +110,7 @@ class CircularConv2d(nn.Conv2d):
     def forward(self, x):
         if self.is_pad:
             if sum(self.h_pad) > 0:
-                x = nn.functional.pad(x, self.h_pad, mode="constant")  # NOTE: original code used 'circular'
+                x = nn.functional.pad(x, self.h_pad, mode="circular")  # NOTE: original code used 'circular'
             if sum(self.v_pad) > 0:
                 x = nn.functional.pad(x, self.v_pad, mode="constant")  # vertical pad
         x = self._conv_forward(x, self.weight, self.bias)

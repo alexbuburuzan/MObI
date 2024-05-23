@@ -1,13 +1,14 @@
-use_camera: True
-use_lidar: False
+use_camera: False
+use_lidar: True
 
-image_height: 512
-image_width: 512
+image_height: 256
+image_width: 256
+latent_size: 32 # image_wifth // 8 
+
 range_height: 64
-range_width: 512
-latent_size: 64 # image_wifth // 8 and range_width // 8
+range_width: 1024 # use feature map crop instead of range crop
 
-batch_size: 1
+batch_size: 16
 
 classes:
   - car
