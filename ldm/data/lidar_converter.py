@@ -173,18 +173,17 @@ class LidarConverter:
         depth = np.linalg.norm(bbox_3d, 2, axis=1)
 
         # get scan components
-        scan_x, scan_y = bbox_3d[:, 0], bbox_3d[:, 1]
-        yaw = -np.arctan2(scan_y, scan_x)
-        min_yaw = np.min(yaw)
+        center_x, center_y = np.mean(bbox_3d[:, 0]), np.mean(bbox_3d[:, 1])
+        center_yaw = -np.arctan2(center_y, center_x)
 
         # rotate bbox_3d around z-axis by -min_yaw
-        c, s = np.cos(min_yaw), np.sin(min_yaw)
+        c, s = np.cos(center_yaw), np.sin(center_yaw)
         R = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
         bbox_3d = np.dot(R, bbox_3d.T).T
         scan_x, scan_y, scan_z = bbox_3d[:, 0], bbox_3d[:, 1], bbox_3d[:, 2]
 
         # get angles of all points
-        yaw = -(np.arctan2(scan_y, scan_x) - min_yaw)
+        yaw = -(np.arctan2(scan_y, scan_x) - center_yaw)
         pitch = np.arcsin(scan_z / depth)
 
         # get projections in image coords
