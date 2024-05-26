@@ -65,6 +65,7 @@ class NuScenesDataset(data.Dataset):
         reference_image_min_w=40,
         frustum_iou_max=0.5,
         camera_visibility_min=0.7,
+        object_area_crop=0.3,
         rot_every_angle=0,
         rot_test_scene=None, # used for rotation test
         use_lidar=False,
@@ -82,6 +83,7 @@ class NuScenesDataset(data.Dataset):
         self.use_lidar = use_lidar
         self.use_camera = use_camera
         self.random_range_crop = random_range_crop
+        self.object_area_crop = object_area_crop
 
         # Dimensions
         self.image_height = image_height
@@ -321,20 +323,49 @@ class NuScenesDataset(data.Dataset):
         image = Image.open(image_path).convert("RGB")
         W, H = image.size
         image = get_tensor()(np.array(image))
-        image = self.image_resize(image)
 
         # BBox
         bbox_image_coords = get_image_coords(bbox_3d, lidar2image, include_depth=True)
-        bbox_image_coords[..., 0] /= W
-        bbox_image_coords[..., 1] /= H
-        bbox_camera_coords = get_camera_coords(bbox_3d, lidar2camera)
 
         # Mask
         use_3d_edit_mask = (random.random() < self.prob_use_3d_edit_mask)
         image_mask = get_inpaint_mask(
             bbox_3d, lidar2image, H, W, self.expand_mask_ratio, use_3d_edit_mask,
         )
+
+        # Crop and resize
+        mask_coords = torch.nonzero(1 - image_mask)
+        y1, x1 = mask_coords.min(dim=0)[0]
+        y2, x2 = mask_coords.max(dim=0)[0]
+
+        area = (1 - image_mask).sum().item() / self.object_area_crop
+        crop_H = int(np.sqrt(area))
+        crop_W = int(np.sqrt(area))
+
+        if y2 - y1 > crop_H:
+            crop_W += crop_H - (y2 - y1)
+            crop_H = y2 - y1
+        if x2 - x1 > crop_W:
+            crop_H += crop_W - (x2 - x1)
+            crop_W = x2 - x1
+
+        crop_H = min(crop_H, H)
+        crop_W = min(crop_W, W)
+        
+
+        left = random.randint(max(0, x2 - crop_W), min(x1, W - crop_W))
+        top = random.randint(max(0, y2 - crop_H), min(y1, H - crop_H))
+
+        image = image[:, top:top+crop_H, left:left+crop_W]
+        image_mask = image_mask[top:top+crop_H, left:left+crop_W]
+
+        bbox_image_coords -= np.array([left, top, 0])
+        bbox_image_coords[..., 0] /= image.size(2)
+        bbox_image_coords[..., 1] /= image.size(1)
+
+        image = self.image_resize(image)
         image_mask = self.image_resize(image_mask.unsqueeze(0))
+
 
         # Inpainted image
         image_inpaint = image.clone() * image_mask
