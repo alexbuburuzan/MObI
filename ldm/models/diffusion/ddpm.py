@@ -1515,6 +1515,9 @@ class LatentDiffusion(DDPM):
                             mask_scores.append(mask_dist.median().item())
                             full_scores.append(full_dist.median().item())
 
+                        if np.isnan(object_scores[-1]):
+                            del object_scores[-1]
+
                     lidar_metrics.update({
                         f"{reduction}/object_{pred_name}_L1" : np.mean(object_scores),
                         f"{reduction}/mask_{pred_name}_L1" : np.mean(mask_scores),
