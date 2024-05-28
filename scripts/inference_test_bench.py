@@ -17,7 +17,7 @@ import multiprocessing
 from ldm.util import instantiate_from_config
 from ldm.models.diffusion.ddim import DDIMSampler
 from ldm.models.diffusion.plms import PLMSSampler
-from ldm.data.utils import draw_projected_bbox, visualize_lidar, focus_on_bbox
+from ldm.data.utils import draw_projected_bbox, visualize_lidar, focus_on_bbox, postprocess_range
 from ldm.data.box_np_ops import points_in_bbox_corners
 from ldm.data.lidar_converter import LidarConverter
 
@@ -414,14 +414,33 @@ def main():
 
                                 image_recon = np.where(mask[..., None], image, image_pred)
                                 os.makedirs(os.path.join(sample_path, segment_id_batch[i]), exist_ok=True)
-                                cv2.imwrite(os.path.join(sample_path, segment_id_batch[i], f'{file_name}.png'), image_recon)
+                                cv2.imwrite(os.path.join(sample_path, segment_id_batch[i], f'{file_name}_seed{opt.seed}.png'), image_recon)
 
                     if model.use_lidar:
                         pred_grid = log["lidar_input-pred-rec"].cpu().numpy()
                         for i in range(batch_size):
                             if opt.save_pred_grids:
                                 grid_vis = pred_grid[i].transpose(1, 2, 0)[..., ::-1]
-                                cv2.imwrite(os.path.join(lidar_path, 'grid-' + segment_id_batch[i] + '_lidar.png'), grid_vis)
+                                cv2.imwrite(os.path.join(lidar_path, 'grid-' + segment_id_batch[i] + f'_lidar_seed{opt.seed}.png'), grid_vis)
+
+                        if opt.save_samples:
+                            lidar_pred = log["lidar_sample"]
+                            mask = batch["lidar"]["range_mask"]
+                            lidar_pred = -mask + (1 - mask) * lidar_pred
+
+                            lidar_pred = postprocess_range(
+                                range_depth=lidar_pred,
+                                range_depth_orig=batch["lidar"]["range_depth_orig"],
+                                crop_left=batch["lidar"]["range_shift_left"],
+                                zero_context=True,
+                            )
+
+                            lidar_converter = LidarConverter()
+                            for i in range(batch_size):
+                                pred_points, _ = lidar_converter.range2pcd(lidar_pred[i])
+
+                                os.makedirs(os.path.join(sample_path, segment_id_batch[i]), exist_ok=True)
+                                np.save(os.path.join(sample_path, segment_id_batch[i], f'object_pc_seed{opt.seed}.npy'), pred_points)
 
                         for k, v in lidar_metrics.items():
                             if k not in metrics:

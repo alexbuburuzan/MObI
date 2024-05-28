@@ -6,4 +6,5 @@ python3 scripts/inference_test_bench.py \
     --scale "5" \
     --ddim_steps "50" \
     --n_samples "1" \
-    --compute_metrics \
+    --save_samples \
+    --save_pred_grids \

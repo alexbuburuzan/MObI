@@ -1503,7 +1503,7 @@ class LatentDiffusion(DDPM):
 
             # Compute metrics
             lidar_metrics = {}
-            for pred_name, pred in {"sample": sample, "rec": rec}.items():
+            for pred_name, pred in {"pred": sample, "rec": rec}.items():
                 for reduction in ["mean", "median"]:
                     B = pred.shape[0]
                     object_scores, mask_scores, full_scores = [], [], []
