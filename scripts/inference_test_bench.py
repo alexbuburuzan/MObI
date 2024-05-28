@@ -27,6 +27,7 @@ from transformers import AutoFeatureExtractor
 import torchvision
 from torchvision.transforms import Resize
 from torch.utils.data import ConcatDataset
+import torch.nn.functional as F
 
 # load safety model
 safety_model_id = "CompVis/stable-diffusion-safety-checker"
@@ -233,12 +234,15 @@ def main():
         help="insert object for rotated bbox",
     )
     parser.add_argument(
-        "--compute_metrics",
+        "--reference_test",
         action="store_true",
-        help="compute metrics",
     )
     parser.add_argument(
         "--save_samples",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--save_pred_grids",
         action="store_true",
     )
     opt = parser.parse_args()
@@ -273,16 +277,14 @@ def main():
 
     lidar_path = os.path.join(outpath, "lidar")
     camera_path = os.path.join(outpath, "camera")
+    sample_path = os.path.join(outpath, "samples")
     os.makedirs(camera_path, exist_ok=True)
     os.makedirs(lidar_path, exist_ok=True)
 
     if opt.rotation_test:
         test_data_config = config.data.params.rotation_test
-        test_dataset = instantiate_from_config(test_data_config)
-    elif opt.compute_metrics:
-        test_data_config = config.data.params.test
-        test_dataset = instantiate_from_config(test_data_config)
-    else:
+        test_dataset = instantiate_from_config(test_data_config) 
+    elif opt.reference_test:
         test_data_config = config.data.params.test
         test_data_config['params']['num_sample_per_class'] = 1
 
@@ -317,6 +319,10 @@ def main():
             test_dataset_random,
             test_dataset_erase,
         ])
+    else:
+        test_data_config = config.data.params.test
+        test_data_config["params"]["return_original_image"] = opt.save_samples
+        test_dataset = instantiate_from_config(test_data_config)
     
 
     test_dataloader= torch.utils.data.DataLoader(
@@ -380,39 +386,58 @@ def main():
                     )
 
                     h_camera, h_lidar = model.decode_sample(samples, data.get("z_lidar"))
-                    log, lidar_metrics = model.log_data(batch, data, h_camera, h_lidar, log_metrics=False, split="test")
+                    log, lidar_metrics = model.log_data(batch, data, h_camera, h_lidar, log_metrics=False, return_sample=opt.save_samples, split="test")
 
                     if model.use_camera:
-                        if opt.save_samples:
-                            pred_grid = log["image_preds"].cpu().numpy()
-                            for i in range(batch_size):
+                        pred_grid = log["image_preds"].cpu().numpy()
+                        for i in range(batch_size):
+                            if opt.save_pred_grids:
                                 grid_vis = pred_grid[i].transpose(1, 2, 0)[..., ::-1]
                                 cv2.imwrite(os.path.join(camera_path, 'grid-' + segment_id_batch[i] + '_img.png'), grid_vis)
 
+                            if opt.save_samples:
+                                patch_pred = log["image_sample"][[i]]
+                                left, top, crop_W, crop_H = batch["image"]["orig"]["crop"][i]
+
+                                patch_pred = F.interpolate(patch_pred, (crop_H, crop_W), mode='bilinear')
+                                patch_pred = patch_pred[0].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
+
+                                image = batch["image"]["orig"]["image"][i].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
+                                mask = batch["image"]["orig"]["mask"][i].cpu().numpy()
+                                file_name = batch["image"]["orig"]["file_name"][i]
+
+                                patch_pred = (((patch_pred + 1) / 2) * 255).astype(np.uint8)
+                                image = (((image + 1) / 2) * 255).astype(np.uint8)
+
+                                image_pred = np.zeros_like(image)
+                                image_pred[top:top+crop_H, left:left+crop_W] = patch_pred
+
+                                image_recon = np.where(mask[..., None], image, image_pred)
+                                os.makedirs(os.path.join(sample_path, segment_id_batch[i]), exist_ok=True)
+                                cv2.imwrite(os.path.join(sample_path, segment_id_batch[i], f'{file_name}.png'), image_recon)
+
                     if model.use_lidar:
-                        if opt.save_samples:
-                            pred_grid = log["lidar_input-pred-rec"].cpu().numpy()
-                            for i in range(batch_size):
+                        pred_grid = log["lidar_input-pred-rec"].cpu().numpy()
+                        for i in range(batch_size):
+                            if opt.save_pred_grids:
                                 grid_vis = pred_grid[i].transpose(1, 2, 0)[..., ::-1]
                                 cv2.imwrite(os.path.join(lidar_path, 'grid-' + segment_id_batch[i] + '_lidar.png'), grid_vis)
 
-                        if opt.compute_metrics:
-                            for k, v in lidar_metrics.items():
-                                if k not in metrics:
-                                    metrics[k] = []
-                                metrics[k].append(v.item())
+                        for k, v in lidar_metrics.items():
+                            if k not in metrics:
+                                metrics[k] = []
+                            metrics[k].append(v.item())
 
-    if opt.compute_metrics:
-        df = {"mean" : {}, "median" : {}}
-        for score_name in metrics:
-            metrics[score_name] = np.mean(metrics[score_name])
-            if "mean" in score_name:
-                df["mean"][score_name.split("/")[-1]] = metrics[score_name]
-            elif "median" in score_name:
-                df["median"][score_name.split("/")[-1]] = metrics[score_name]
+    df = {"mean" : {}, "median" : {}}
+    for score_name in metrics:
+        metrics[score_name] = np.mean(metrics[score_name])
+        if "mean" in score_name:
+            df["mean"][score_name.split("/")[-1]] = metrics[score_name]
+        elif "median" in score_name:
+            df["median"][score_name.split("/")[-1]] = metrics[score_name]
 
-        df = pd.DataFrame(df)
-        df.to_csv(os.path.join(outpath, "metrics.csv"))
+    df = pd.DataFrame(df)
+    df.to_csv(os.path.join(outpath, "metrics.csv"))
 
     print(f"Your samples are ready and waiting for you here: \n{outpath} \n"
           f" \nEnjoy.")

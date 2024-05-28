@@ -1461,7 +1461,7 @@ class LatentDiffusion(DDPM):
         return log
     
     @torch.no_grad()
-    def log_data(self, batch, data, h_camera, h_lidar, log_metrics=True, split="train"):
+    def log_data(self, batch, data, h_camera, h_lidar, log_metrics=True, return_sample=False, split="train"):
         log = dict()
         lidar_metrics = None
         if self.use_camera:
@@ -1480,6 +1480,9 @@ class LatentDiffusion(DDPM):
             log["image_preds"] = torch.cat([input, inpaint_input, reference, sample], dim=-2)
             log["image_input-rec"] = torch.cat([input, rec], dim=-2)
 
+            if return_sample:
+                log["image_sample"] = image_sample
+
         if self.use_lidar:
             lidar_sample = self.decode_first_stage(h_lidar, module_name="lidar_stage_model")
             lidar_sample = torch.clamp(lidar_sample, -1., 1.)
@@ -1494,6 +1497,9 @@ class LatentDiffusion(DDPM):
 
             log["range_preds"] = torch.cat([input, inpaint, instance_mask, sample], dim=-2)
             log["range_input-rec"] = torch.cat([input, rec], dim=-2)
+
+            if return_sample:
+                log["lidar_sample"] = lidar_sample
 
             # Compute metrics
             lidar_metrics = {}

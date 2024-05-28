@@ -61,17 +61,21 @@ class NuScenesDataset(data.Dataset):
         image_width=512,
         range_height=64,
         range_width=1024,
-        reference_image_min_h=40,
-        reference_image_min_w=40,
+        reference_image_min_h=100,
+        reference_image_max_h=800,
+        reference_image_min_w=100,
+        reference_image_max_w=1400,
         frustum_iou_max=0.5,
         camera_visibility_min=0.7,
-        object_area_crop=0.3,
+        object_area_crop=0.1,
+        min_lidar_points=10,
         rot_every_angle=0,
         rot_test_scene=None, # used for rotation test
         use_lidar=False,
         use_camera=True,
         random_range_crop=False,
         num_samples_per_class=None,
+        return_original_image=False,
     ) -> None:
         self.state = state
         self.ref_aug = ref_aug
@@ -84,6 +88,7 @@ class NuScenesDataset(data.Dataset):
         self.use_camera = use_camera
         self.random_range_crop = random_range_crop
         self.object_area_crop = object_area_crop
+        self.return_original_image = return_original_image
 
         # Dimensions
         self.image_height = image_height
@@ -94,12 +99,14 @@ class NuScenesDataset(data.Dataset):
         self.objects_meta = pd.read_csv(object_database_path, index_col=0)
         # Filter out small, occluded objects
         self.objects_meta = self.objects_meta[
-            (self.objects_meta["reference_image_h"] >= reference_image_min_w) &
-            (self.objects_meta["reference_image_w"] >= reference_image_min_h) &
-            (self.objects_meta["reference_image_w"] <  1400) &
+            (self.objects_meta["reference_image_h"] >= reference_image_min_h) &
+            (self.objects_meta["reference_image_h"] <= reference_image_max_h) &
+            (self.objects_meta["reference_image_w"] >= reference_image_min_w) &
+            (self.objects_meta["reference_image_w"] <= reference_image_max_w) &
             (self.objects_meta["max_iou_overlap"] <= frustum_iou_max) &
             (self.objects_meta["object_class"].isin(object_classes)) &
-            (self.objects_meta["camera_visibility_mask"] >= camera_visibility_min)
+            (self.objects_meta["camera_visibility_mask"] >= camera_visibility_min) &
+            (self.objects_meta["num_lidar_points"] >= min_lidar_points)
         ]
 
         # Select an object from each class when testing
@@ -333,6 +340,10 @@ class NuScenesDataset(data.Dataset):
             bbox_3d, lidar2image, H, W, self.expand_mask_ratio, use_3d_edit_mask,
         )
 
+        if self.return_original_image:
+            image_orig = image.clone()
+            image_mask_orig = image_mask.clone()
+
         # Crop and resize
         mask_coords = torch.nonzero(1 - image_mask)
         y1, x1 = mask_coords.min(dim=0)[0]
@@ -351,7 +362,6 @@ class NuScenesDataset(data.Dataset):
 
         crop_H = min(crop_H, H)
         crop_W = min(crop_W, W)
-        
 
         left = random.randint(max(0, x2 - crop_W), min(x1, W - crop_W))
         top = random.randint(max(0, y2 - crop_H), min(y1, H - crop_H))
@@ -378,5 +388,13 @@ class NuScenesDataset(data.Dataset):
                 "ref_bbox": bbox_image_coords,
             }
         }
+
+        if self.return_original_image:
+            data["orig"] = {
+                "crop": torch.tensor([left, top, crop_W, crop_H]),
+                "image": image_orig,
+                "mask": image_mask_orig,
+                "file_name": image_path.split("/")[-1].split(".")[0],
+            }
 
         return data

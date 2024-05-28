@@ -205,6 +205,8 @@ def make_contiguous(x):
         return {k: make_contiguous(v) for k, v in x.items()}
     elif x is None:
         return x
+    elif isinstance(x, list):
+        return x
     return x.to(memory_format=torch.contiguous_format).float()
 
 
