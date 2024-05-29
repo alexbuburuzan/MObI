@@ -4,6 +4,7 @@ magicdrive-log/*
 *.png
 *.jpg
 *.csv
+*.npy
 perception/cross_view_transformers/splits/*
 tmp
 tmp/*
