@@ -636,6 +636,7 @@ class UNetModel(nn.Module):
 
         self.use_camera = use_camera
         self.use_lidar = use_lidar
+        self.multimodal = (use_camera & use_lidar)
 
         if use_lidar:
             self.lidar_in = TimestepEmbedSequential(
@@ -718,7 +719,8 @@ class UNetModel(nn.Module):
                             num_head_channels=dim_head,
                             use_new_attention_order=use_new_attention_order,
                         ) if not use_spatial_transformer else SpatialTransformer(
-                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim, bbox_cond=bbox_cond
+                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim,
+                            bbox_cond=bbox_cond, multimodal=self.multimodal,
                         )
                     )
                 self.input_blocks.append(TimestepEmbedSequential(*layers))
@@ -773,7 +775,8 @@ class UNetModel(nn.Module):
                 num_head_channels=dim_head,
                 use_new_attention_order=use_new_attention_order,
             ) if not use_spatial_transformer else SpatialTransformer(
-                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim, bbox_cond=bbox_cond
+                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim,
+                            bbox_cond=bbox_cond, multimodal=self.multimodal,
                         ),
             ResBlock(
                 ch,
@@ -819,7 +822,8 @@ class UNetModel(nn.Module):
                             num_head_channels=dim_head,
                             use_new_attention_order=use_new_attention_order,
                         ) if not use_spatial_transformer else SpatialTransformer(
-                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim, bbox_cond=bbox_cond
+                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim,
+                            bbox_cond=bbox_cond, multimodal=self.multimodal,
                         )
                     )
                 if level and i == num_res_blocks:

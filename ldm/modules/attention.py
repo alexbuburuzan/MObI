@@ -194,23 +194,29 @@ class CrossAttention(nn.Module):
 
 
 class BasicTransformerBlock(nn.Module):
-    def __init__(self, dim, n_heads, d_head, dropout=0., context_dim=None, gated_ff=True, checkpoint=False, bbox_cond=False):
+    def __init__(self, dim, n_heads, d_head, dropout=0., context_dim=None, gated_ff=True, checkpoint=False, bbox_cond=False, multimodal=False):
         super().__init__()
         self.bbox_cond = bbox_cond
+        self.multimodal = multimodal
 
         self.attn1 = CrossAttention(query_dim=dim, heads=n_heads, dim_head=d_head, dropout=dropout)  # is a self-attention
         self.ff = FeedForward(dim, dropout=dropout, glu=gated_ff)
         self.attn2 = CrossAttention(query_dim=dim, context_dim=context_dim,
                                     heads=n_heads, dim_head=d_head, dropout=dropout)  # is self-attn if context is none
         if self.bbox_cond:
-            self.multiview_attn = CrossAttention(query_dim=dim, context_dim=context_dim, heads=n_heads, dim_head=d_head, dropout=dropout)
+            self.cond_adapter_attn = CrossAttention(query_dim=dim, context_dim=context_dim, heads=n_heads, dim_head=d_head, dropout=dropout)
+        if self.multimodal:
+            self.cross_modal_attn = CrossAttention(query_dim=dim, context_dim=dim, heads=n_heads, dim_head=d_head, dropout=dropout)
 
         self.norm1 = nn.LayerNorm(dim)
         self.norm2 = nn.LayerNorm(dim)
         self.norm3 = nn.LayerNorm(dim)
         if self.bbox_cond:
-            self.multiview_norm = nn.LayerNorm(dim)
-            self.multiview_connector = zero_module(nn.Linear(dim, dim))
+            self.cond_adapter_norm = nn.LayerNorm(dim)
+            self.cond_adapter_connector = zero_module(nn.Linear(dim, dim))
+        if self.multimodal:
+            self.cross_modal_norm = nn.LayerNorm(dim)
+            self.cross_modal_connector = zero_module(nn.Linear(dim, dim))
         self.checkpoint = checkpoint
 
     def forward(self, x, context=None):
@@ -224,9 +230,21 @@ class BasicTransformerBlock(nn.Module):
         x = self.attn2(self.norm2(x), context=context) + x
 
         if self.bbox_cond:
-            x = self.multiview_connector(
-                self.multiview_attn(
-                    self.multiview_norm(x), context=context
+            x = self.cond_adapter_connector(
+                self.cond_adapter_attn(
+                    self.cond_adapter_norm(x),
+                    context=context
+                )
+            ) + x
+
+        if self.multimodal:
+            B = x.shape[0]
+            x_other = torch.flip(x.view(B // 2, 2, *x.shape[1:]), dims=[1])
+            x_other = torch.reshape(x_other, (B, *x.shape[1:]))
+            x = self.cross_modal_connector(
+                self.cross_modal_attn(
+                    self.cross_modal_norm(x),
+                    context=x_other
                 )
             ) + x
 
@@ -243,7 +261,8 @@ class SpatialTransformer(nn.Module):
     Finally, reshape to image
     """
     def __init__(self, in_channels, n_heads, d_head,
-                 depth=1, dropout=0., context_dim=None, bbox_cond=False):
+                 depth=1, dropout=0., context_dim=None,
+                 bbox_cond=False, multimodal=False):
         super().__init__()
         self.in_channels = in_channels
         inner_dim = n_heads * d_head
@@ -256,7 +275,7 @@ class SpatialTransformer(nn.Module):
                                  padding=0)
 
         self.transformer_blocks = nn.ModuleList(
-            [BasicTransformerBlock(inner_dim, n_heads, d_head, dropout=dropout, context_dim=context_dim, bbox_cond=bbox_cond)
+            [BasicTransformerBlock(inner_dim, n_heads, d_head, dropout=dropout, context_dim=context_dim, bbox_cond=bbox_cond, multimodal=multimodal)
                 for d in range(depth)]
         )
 

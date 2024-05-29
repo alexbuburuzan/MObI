@@ -1,14 +1,15 @@
-use_camera: False
+use_camera: True
 use_lidar: True
 
-image_height: 256
-image_width: 256
-latent_size: 32 # image_wifth // 8 
+image_height: 512
+image_width: 512
+latent_size: 64 # image_wifth // 8 
+object_area_crop: 0.2
 
 range_height: 64
 range_width: 1024 # use feature map crop instead of range crop
 
-batch_size: 16
+batch_size: 1
 
 classes:
   - car
@@ -142,16 +143,13 @@ data:
               scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_train.pkl
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0
-              camera_visibility_min: 0.7
+              object_area_crop: ${object_area_crop}
               ref_aug: True
               ref_mode: same-ref
               image_height: ${image_height}
               image_width: ${image_width}
               range_height: ${range_height}
               range_width: ${range_width}
-              reference_image_min_w: 200
-              reference_image_min_h: 200
-              frustum_iou_max: 0.5
               object_classes: ${classes}
               random_range_crop: False
       validation:
@@ -164,16 +162,13 @@ data:
               scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0
-              camera_visibility_min: 0.7
+              object_area_crop: ${object_area_crop}
               ref_aug: True
               ref_mode: same-ref
               image_height: ${image_height}
               image_width: ${image_width}
               range_height: ${range_height}
               range_width: ${range_width}
-              reference_image_min_w: 200
-              reference_image_min_h: 200
-              frustum_iou_max: 0.5
               object_classes: ${classes}
               random_range_crop: False
       test:
@@ -186,16 +181,13 @@ data:
               scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0
-              camera_visibility_min: 0.7
+              object_area_crop: ${object_area_crop}
               ref_aug: False
               ref_mode: same-ref
               image_height: ${image_height}
               image_width: ${image_width}
               range_height: ${range_height}
               range_width: ${range_width}
-              reference_image_min_w: 200
-              reference_image_min_h: 200
-              frustum_iou_max: 0.5
               object_classes: ${classes}
       rotation_test:
           target: ldm.data.nuscenes.NuScenesDataset
@@ -207,17 +199,14 @@ data:
               scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0
-              camera_visibility_min: 0.7
-              ref_aug: False
+              object_area_crop: ${object_area_crop}
               prob_use_3d_edit_mask: 1
+              ref_aug: False
               ref_mode: same-ref
               image_height: ${image_height}
               image_width: ${image_width}
               range_height: ${range_height}
               range_width: ${range_width}
-              reference_image_min_w: 200
-              reference_image_min_h: 200
-              frustum_iou_max: 0.5
               rot_every_angle: 30
               specific_scene: "06be0e3b665c44fa8d17d9f4770bdf9c"
               object_classes:
