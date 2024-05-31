@@ -1,13 +1,13 @@
 use_camera: True
 use_lidar: True
 
-image_height: 512
-image_width: 512
-latent_size: 64 # image_wifth // 8 
+image_height: 256
+image_width: 256
+latent_size: 32 # image_wifth // 8 
 object_area_crop: 0.2
 
 range_height: 64
-range_width: 1024 # use feature map crop instead of range crop
+range_width: 1096 # use feature map crop instead of range crop
 
 batch_size: 1
 

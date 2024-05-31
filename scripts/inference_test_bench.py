@@ -437,7 +437,11 @@ def main():
 
                             lidar_converter = LidarConverter()
                             for i in range(batch_size):
-                                pred_points, _ = lidar_converter.range2pcd(lidar_pred[i])
+                                pred_points, _ = lidar_converter.range2pcd(
+                                    lidar_pred[i], 
+                                    batch['lidar']["range_pitch"].cpu().numpy(),
+                                    batch['lidar']["range_yaw"].cpu().numpy(),
+                                )
 
                                 os.makedirs(os.path.join(sample_path, segment_id_batch[i]), exist_ok=True)
                                 np.save(os.path.join(sample_path, segment_id_batch[i], f'object_pc_seed{opt.seed}.npy'), pred_points)

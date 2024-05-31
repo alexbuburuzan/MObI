@@ -60,7 +60,7 @@ class NuScenesDataset(data.Dataset):
         image_height=512,
         image_width=512,
         range_height=64,
-        range_width=1024,
+        range_width=1096,
         reference_image_min_h=100,
         reference_image_max_h=800,
         reference_image_min_w=100,
@@ -253,6 +253,8 @@ class NuScenesDataset(data.Dataset):
         if "range_depth_path" in scene_info and "range_intensity_path" in scene_info:
             range_depth = np.load(scene_info["range_depth_path"])
             range_int = np.load(scene_info["range_intensity_path"])
+            range_pitch = np.load(scene_info["range_pitch_path"])
+            range_yaw = np.load(scene_info["range_yaw_path"])
 
             if "range_instance_mask_path" in scene_info:
                 range_instance_mask = (np.load(scene_info["range_instance_mask_path"]) == obj_idx).astype(np.float32)
@@ -262,7 +264,7 @@ class NuScenesDataset(data.Dataset):
         elif "lidar_path" in scene_info:
             lidar_scan = np.load(scene_info["lidar_path"])
             points = lidar_scan[:, :3].astype(np.float32)
-            range_depth, range_int = lidar_converter.points2range(points, labels=lidar_scan[:, 3])
+            range_depth, range_int, _, range_pitch, range_yaw = lidar_converter.pcd2range(points, labels=lidar_scan[:, 3])
         else:
             raise ValueError("No lidar data found")
         
@@ -314,6 +316,8 @@ class NuScenesDataset(data.Dataset):
             "range_shift_left": range_shift_left,
             "range_mask": range_mask,
             "range_instance_mask": range_instance_mask,
+            "range_pitch": range_pitch,
+            "range_yaw": range_yaw,
             "cond": {
                 "ref_bbox": bbox_range_coords,
             }

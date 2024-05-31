@@ -1543,6 +1543,8 @@ class LatentDiffusion(DDPM):
                 bboxes=batch["bbox_3d"],
                 range_depth_orig=batch["lidar"]["range_depth_orig"],
                 range_shift_left=batch["lidar"]["range_shift_left"],
+                range_pitch=batch["lidar"]["range_pitch"],
+                range_yaw=batch["lidar"]["range_yaw"],
             )
 
             log["lidar_input-pred-rec"] = torch.cat([input_vis, sample_vis, rec_vis], dim=-2)

@@ -250,8 +250,9 @@ def visualize_lidar(
     xlim=(-10, 10),
     ylim=(-10, 10),
     thickness: int = 1,
-    color=(0, 165, 255),
-    dpi: int = 20,  # Set to desired resolution
+    bbox_color=(0, 165, 255),
+    points_color=(0, 128, 128),
+    dpi: int = 40,  # Set to desired resolution
 ) -> np.ndarray:
     bbox = copy.deepcopy(bboxes)
     lidar = lidar.copy() if lidar is not None else None
@@ -270,7 +271,7 @@ def visualize_lidar(
             ]:
                 pt1 = (int(bbox[start, 0]*dpi-xlim[0]*dpi), int((ylim[1]-bbox[start, 1])*dpi))
                 pt2 = (int(bbox[end, 0]*dpi-xlim[0]*dpi), int((ylim[1]-bbox[end, 1])*dpi))
-                cv2.line(img, pt1, pt2, color, thickness)
+                cv2.line(img, pt1, pt2, bbox_color, thickness)
 
             # draw an arrow for the orientation
             center = np.mean(bbox, axis=0)
@@ -281,19 +282,19 @@ def visualize_lidar(
                 img,
                 pt_center,
                 pt_tip,
-                color,
+                bbox_color,
                 thickness,
                 cv2.LINE_AA,
                 tipLength=0.1,
             )
 
     if lidar is not None:
-        lidar[:, 0] = (lidar[:, 0] - xlim[0]) * dpi
+        lidar[:, 0] = (lidar[:, 0] - xlim[0]) * dpi 
         lidar[:, 1] = (ylim[1] - lidar[:, 1]) * dpi
         mask = (lidar[:, 0] >= 0) & (lidar[:, 0] < img.shape[1]) & (lidar[:, 1] >= 0) & (lidar[:, 1] < img.shape[0])
         lidar = lidar[mask].astype(int)
 
-        img[lidar[:, 1], lidar[:, 0]] = (0, 128, 128)    
+        img[lidar[:, 1], lidar[:, 0]] = points_color
 
     if fpath is not None:
         cv2.imwrite(fpath, img[..., ::-1])    
@@ -351,7 +352,14 @@ def get_images(x, transform=None, bboxes=None):
     return torch.from_numpy(x).permute(0, 3, 1, 2)
 
 
-def get_camera_vis(sample, input, inpaint_input, reference, rec, ref_bboxes=None):
+def get_camera_vis(
+    sample,
+    input,
+    inpaint_input,
+    reference,
+    rec,
+    ref_bboxes=None,
+):
     ref_bboxes = ref_bboxes.cpu().numpy()
     sample = get_images(sample, transform=un_norm, bboxes=ref_bboxes)
     input = get_images(input, transform=un_norm, bboxes=ref_bboxes)
@@ -362,9 +370,21 @@ def get_camera_vis(sample, input, inpaint_input, reference, rec, ref_bboxes=None
     return sample, input, inpaint_input, reference, rec
 
 
-def get_lidar_vis(sample, input, rec, bboxes, range_depth_orig, range_shift_left):
+def get_lidar_vis(
+    sample,
+    input,
+    rec,
+    bboxes,
+    range_depth_orig,
+    range_shift_left,
+    range_pitch,
+    range_yaw,
+):
     sample_vis, input_vis, rec_vis = [], [], []
     bboxes = bboxes.cpu().numpy()
+    range_pitch = range_pitch.cpu().numpy()
+    range_yaw = range_yaw.cpu().numpy()
+
     sample = postprocess_range(sample, range_depth_orig, crop_left=range_shift_left, zero_context=True)
     input = postprocess_range(input, range_depth_orig, crop_left=range_shift_left, zero_context=True)
     rec = postprocess_range(rec, range_depth_orig, crop_left=range_shift_left, zero_context=True)
@@ -373,17 +393,17 @@ def get_lidar_vis(sample, input, rec, bboxes, range_depth_orig, range_shift_left
     for i in range(len(sample)):
         bbox_3d = bboxes[i]
 
-        sample_pc, _ = lidar_converter.range2pcd(sample[i])
-        input_pc, _ = lidar_converter.range2pcd(input[i])
-        rec_pc, _ = lidar_converter.range2pcd(rec[i])
+        sample_pc, _ = lidar_converter.range2pcd(sample[i], range_pitch[i], range_yaw[i])
+        input_pc, _ = lidar_converter.range2pcd(input[i], range_pitch[i], range_yaw[i])
+        rec_pc, _ = lidar_converter.range2pcd(rec[i], range_pitch[i], range_yaw[i])
 
         sample_pc, _ = focus_on_bbox(sample_pc, bbox_3d)
         input_pc, _ = focus_on_bbox(input_pc, bbox_3d)
         rec_pc, bbox_3d = focus_on_bbox(rec_pc, bbox_3d)
 
-        sample_vis.append(visualize_lidar(sample_pc, bboxes=bbox_3d, color=(255, 165, 0)))
-        input_vis.append(visualize_lidar(input_pc, bboxes=bbox_3d, color=(255, 165, 0)))
-        rec_vis.append(visualize_lidar(rec_pc, bboxes=bbox_3d, color=(255, 165, 0)))
+        sample_vis.append(visualize_lidar(sample_pc, bboxes=bbox_3d, bbox_color=(255, 165, 0)))
+        input_vis.append(visualize_lidar(input_pc, bboxes=bbox_3d, bbox_color=(255, 165, 0)))
+        rec_vis.append(visualize_lidar(rec_pc, bboxes=bbox_3d, bbox_color=(255, 165, 0)))
 
     sample_vis = torch.from_numpy(np.stack(sample_vis)).permute(0, 3, 1, 2)
     input_vis = torch.from_numpy(np.stack(input_vis)).permute(0, 3, 1, 2)

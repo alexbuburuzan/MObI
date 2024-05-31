@@ -7,22 +7,18 @@ class LidarConverter:
     def __init__(
         self,
         H = 32,
-        W = 1024,
-        fov = (10, -30),
-        depth_range = (1, 51.2),
+        W = 1096,
+        depth_interval = (1.4, 54),
         log_scale = False,
-        depth_scale = 5.7,
+        depth_scale = 5.8,
     ) -> None:
         self.H = H
         self.W = W
-        self.fov = fov
-        self.depth_range = depth_range
-        self.fov_up = fov[0] / 180.0 * np.pi
-        self.fov_down = fov[1] / 180.0 * np.pi
-        self.fov_range = abs(self.fov_down) + abs(self.fov_up)
+        self.depth_interval = depth_interval
         self.base_size = (H, W)
         self.log_scale = log_scale
         self.depth_scale = depth_scale
+        self.beam_pitch_angles = np.array([0.0232 * x for x in range(-23, 9)])
 
     def pcd2range(
         self,
@@ -38,7 +34,9 @@ class LidarConverter:
         Returns:
             range_depth: np.array, shape (H, W)
             range_int: np.array, shape (H, W)
-            mask: np.array, shape (N,)
+            filtered_points: np.array, shape (N,)
+            range_pitch: np.array, shape (H, W)
+            range_yaw: np.array, shape (H, W)
         """
         pcd, label = self._copy_arrays(pcd, label)
 
@@ -46,8 +44,8 @@ class LidarConverter:
         depth = np.linalg.norm(pcd, 2, axis=1)
 
         # mask points out of range
-        mask = np.logical_and(depth > self.depth_range[0], depth < self.depth_range[1])
-        depth, pcd = depth[mask], pcd[mask]
+        filtered_points = np.logical_and(depth > self.depth_interval[0], depth < self.depth_interval[1])
+        depth, pcd = depth[filtered_points], pcd[filtered_points]
 
         # get scan components
         scan_x, scan_y, scan_z = pcd[:, 0], pcd[:, 1], pcd[:, 2]
@@ -56,34 +54,30 @@ class LidarConverter:
         yaw = -np.arctan2(scan_y, scan_x)
         pitch = np.arcsin(scan_z / depth)
 
+        proj_y = (pitch - self.beam_pitch_angles.min()) / (self.beam_pitch_angles.max() - self.beam_pitch_angles.min()) * 31
+        proj_y = 31 - np.round(np.clip(proj_y, 0, 31)).astype(np.int32)
+
         # get projections in range coords
-        proj_x = 0.5 * (yaw / np.pi + 1.0)  # in [0.0, 1.0]
-        proj_y = 1.0 - (pitch + abs(self.fov_down)) / self.fov_range  # in [0.0, 1.0]
-
-        # scale to range size using angular resolution
-        proj_x *= self.W  # in [0.0, W]
-        proj_y *= self.H  # in [0.0, H]
-
-        # round and clamp for use as index
-        proj_x = np.maximum(0, np.minimum(self.base_size[1] - 1, np.floor(proj_x))).astype(
-            np.int32
-        )  # in [0,W-1]
-        proj_y = np.maximum(0, np.minimum(self.base_size[0] - 1, np.floor(proj_y))).astype(
-            np.int32
-        )  # in [0,H-1]
+        proj_x = 0.5 * (yaw / np.pi + 1.0) * self.W
+        proj_x = np.maximum(0, np.minimum(self.base_size[1] - 1, np.floor(proj_x))).astype(np.int32)
 
         # order in decreasing depth
         order = np.argsort(depth)[::-1]
         proj_x, proj_y = proj_x[order], proj_y[order]
+        depth, pitch, yaw = depth[order], pitch[order], yaw[order]
 
-        # project depth
-        depth = depth[order]
+        # project points
         range_depth = np.full(self.base_size, -1, dtype=np.float32)
+        range_pitch = np.full(self.base_size, -1, dtype=np.float32)
+        range_yaw = np.full(self.base_size, -4, dtype=np.float32)
+
         range_depth[proj_y, proj_x] = depth
+        range_pitch[proj_y, proj_x] = pitch
+        range_yaw[proj_y, proj_x] = yaw
 
         # project point range_int
         if label is not None:
-            label = label[mask][order]
+            label = label[filtered_points][order]
             range_int = np.full(self.base_size, 0, dtype=np.float32)
             range_int[proj_y, proj_x] = label
         else:
@@ -94,16 +88,18 @@ class LidarConverter:
             range_depth = np.log2(range_depth + 0.0001 + 1)
             range_depth = range_depth / self.depth_scale
         else:
-            range_depth = range_depth / self.depth_range[1]
+            range_depth = range_depth / self.depth_interval[1]
 
         range_depth = range_depth * 2.0 - 1.0
         range_depth = np.clip(range_depth, -1, 1)
 
-        return range_depth, range_int, mask
+        return range_depth, range_int, filtered_points, range_pitch, range_yaw
 
     def range2pcd(
         self,
         range_depth,
+        range_pitch,
+        range_yaw,
         label=None,
     ):
         """
@@ -111,6 +107,8 @@ class LidarConverter:
 
         Args:
             range_depth: np.array, shape (H, W)
+            range_pitch: np.array, shape (H, W)
+            range_yaw: np.array, shape (H, W)
             label: np.array, shape (H, W)
         Returns:
             pcd: np.array, shape (N, 3)
@@ -128,16 +126,11 @@ class LidarConverter:
             range_depth = range_depth * self.depth_scale
             range_depth = np.exp2(range_depth) - 1
         else:
-            range_depth = range_depth * self.depth_range[1]
+            range_depth = range_depth * self.depth_interval[1]
 
         depth = range_depth.flatten()
-
-        scan_x, scan_y = np.meshgrid(np.arange(self.base_size[1]), np.arange(self.base_size[0]))
-        scan_x = scan_x.astype(np.float32) / self.base_size[1]
-        scan_y = scan_y.astype(np.float32) / self.base_size[0]
-
-        yaw = (np.pi * (scan_x * 2 - 1)).flatten()
-        pitch = ((1.0 - scan_y) * self.fov_range - abs(self.fov_down)).flatten()
+        yaw = range_yaw.flatten()
+        pitch = range_pitch.flatten()
 
         pcd = np.zeros((len(yaw), 3)).astype(np.float32)
         pcd[:, 0] = np.cos(yaw) * np.cos(pitch) * depth
@@ -145,17 +138,12 @@ class LidarConverter:
         pcd[:, 2] = np.sin(pitch) * depth
 
         # mask out invalid points
-        mask = np.logical_and(depth > self.depth_range[0], depth < self.depth_range[1])
+        mask = np.logical_and(depth > self.depth_interval[0], depth < self.depth_interval[1])
         pcd = pcd[mask, :]
-
-        # label
-        if label is not None:
-            label = label.flatten()[mask]
-        else:
-            label = None
+        label = label.flatten()[mask] if label is not None else None
 
         return pcd, label
-
+    
     def get_range_coords(self, bbox_3d):
         """
         Get range coordinates of the 3D bounding box
@@ -188,17 +176,18 @@ class LidarConverter:
 
         # get projections in image coords
         proj_x = 0.5 * (yaw / np.pi + 1.0)  # in [0.0, 1.0]
-        proj_y = 1.0 - (pitch + abs(self.fov_down)) / self.fov_range  # in [0.0, 1.0]
+        
+        proj_y = (pitch - self.beam_pitch_angles.min()) / (self.beam_pitch_angles.max() - self.beam_pitch_angles.min()) * 31
+        proj_y = 31 - np.round(np.clip(proj_y, 0, 31)).astype(np.int32)
 
         # scale to image size using angular resolution
         proj_x *= self.W
-        proj_y *= self.H
 
         if self.log_scale:
             depth = np.log2(depth + 0.0001 + 1)
             depth = depth / self.depth_scale
         else:
-            depth = depth / self.depth_range[1]
+            depth = depth / self.depth_interval[1]
 
         depth = depth * 2.0 - 1.0
         depth = np.clip(depth, -1, 1)
@@ -214,7 +203,7 @@ class LidarConverter:
         range_int=None,
         mask=None,
         bbox_range_coords=None,
-        new_W=1024,
+        new_W=1096,
         new_H=32,
     ):
         """
@@ -297,7 +286,7 @@ class LidarConverter:
         range_depth=None,
         range_int=None,
         mask=None,
-        width=1024,
+        width=1096,
         random_crop=False,
         crop_left=None,
     ):
@@ -358,7 +347,7 @@ class LidarConverter:
         range_int=None,
         mask=None,
         height=32,
-        width=1024,
+        width=1096,
         crop_left=None,
         random_crop=False,
     ):
