@@ -66,16 +66,24 @@ class LidarConverter:
         proj_x, proj_y = proj_x[order], proj_y[order]
         depth, pitch, yaw = depth[order], pitch[order], yaw[order]
 
-        # project points
-        range_depth = np.full(self.base_size, -1, dtype=np.float32)
-        range_pitch = np.full(self.base_size, -1, dtype=np.float32)
-        range_yaw = np.full(self.base_size, -4, dtype=np.float32)
+        # default yaw
+        scan_x = np.meshgrid(np.arange(self.base_size[1]), np.arange(self.base_size[0]))[0]
+        scan_x = scan_x.astype(np.float32) / self.base_size[1]
+        range_yaw = (np.pi * (scan_x * 2 - 1))
 
+        # default pitch
+        range_pitch = np.zeros(self.base_size, dtype=np.float32)
+        for i in range(32):
+            range_pitch[i, :] = self.beam_pitch_angles[31 - i]
+
+        # default depth
+        range_depth = np.full(self.base_size, -1, dtype=np.float32)
+
+        # project points to range view
         range_depth[proj_y, proj_x] = depth
         range_pitch[proj_y, proj_x] = pitch
         range_yaw[proj_y, proj_x] = yaw
 
-        # project point range_int
         if label is not None:
             label = label[filtered_points][order]
             range_int = np.full(self.base_size, 0, dtype=np.float32)
