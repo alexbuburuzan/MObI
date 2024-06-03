@@ -371,19 +371,36 @@ def main():
                     c = data["cond"]
 
                     shape = [model.channels, model.image_size, model.image_size]
-                    samples, _ = sampler.sample(
-                        S=opt.ddim_steps,
-                        conditioning=c,
-                        batch_size=data["z"].shape[0],
-                        shape=shape,
-                        verbose=False,
-                        unconditional_guidance_scale=opt.scale,
-                        unconditional_conditioning=uc,
-                        eta=opt.ddim_eta,
-                        x_T=start_code,
-                        inpaint_image=data["z"][:,8:16],
-                        inpaint_mask=data["z"][:,[16]]
-                    )
+                    if opt.plms:
+                        samples, _ = sampler.sample(
+                            S=opt.ddim_steps,
+                            conditioning=c,
+                            batch_size=data["z"].shape[0],
+                            shape=shape,
+                            verbose=False,
+                            unconditional_guidance_scale=opt.scale,
+                            unconditional_conditioning=uc,
+                            eta=opt.ddim_eta,
+                            x_T=start_code,
+                            inpaint_image=data["z"][:,8:16],
+                            inpaint_mask=data["z"][:,[16]]
+                        )
+                    else:
+                        samples, _ = sampler.sample(
+                            S=opt.ddim_steps,
+                            conditioning=c,
+                            batch_size=data["z"].shape[0],
+                            shape=shape,
+                            verbose=False,
+                            unconditional_guidance_scale=opt.scale,
+                            unconditional_conditioning=uc,
+                            eta=opt.ddim_eta,
+                            x_T=start_code,
+                            test_model_kwargs={
+                                "inpaint_image": data["z"][:,8:16],
+                                "inpaint_mask": data["z"][:,[16]]
+                            }
+                        )
 
                     h_camera, h_lidar = model.decode_sample(samples, data.get("z_lidar"))
                     log, lidar_metrics = model.log_data(batch, data, h_camera, h_lidar, log_metrics=False, return_sample=opt.save_samples, split="test")
