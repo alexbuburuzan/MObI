@@ -1557,7 +1557,13 @@ class LatentDiffusion(DDPM):
         param_names = []
 
         for name, param in self.model.named_parameters():
-            if "cond_adapter" in name or "lidar" in name or "cross_modal" in name:
+            if (
+                "cond_adapter" in name or
+                "lidar" in name or 
+                "cross_modal" in name or
+                name[:4] == "out." or # image out projection
+                "input_blocks.0.0" in name # image in projection
+            ):
                 params.append(param)
                 param_names.append(name)
                 assert param.requires_grad, f"{name} requires grad is False"
@@ -1614,7 +1620,13 @@ class DiffusionWrapper(pl.LightningModule):
         self.diffusion_model = instantiate_from_config(diff_model_config).eval()
 
         for name, param in self.diffusion_model.named_parameters():
-            if "cond_adapter" in name or "lidar" in name or "cross_modal" in name:
+            if (
+                "cond_adapter" in name or
+                "lidar" in name or 
+                "cross_modal" in name or
+                name[:4] == "out." or # image out projection
+                "input_blocks.0.0" in name # image in projection
+            ):
                 param.requires_grad = True
             else:
                 param.requires_grad = False
