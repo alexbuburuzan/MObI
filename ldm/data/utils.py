@@ -324,12 +324,12 @@ def focus_on_bbox(points, bbox_3d):
     return points, bbox_3d
 
 
-def un_norm(x):
-    return (Resize((256, 256))(x) + 1.0)/2.0
+def un_norm(x, size=(256, 256)):
+    return (Resize(size)(x) + 1.0)/2.0
 
 
-def un_norm_clip(x):
-    x = Resize((256, 256))(x)
+def un_norm_clip(x, size=(256, 256)):
+    x = Resize(size)(x)
     x[:,0] = x[:,0] * 0.26862954 + 0.48145466
     x[:,1] = x[:,1] * 0.26130258 + 0.4578275
     x[:,2] = x[:,2] * 0.27577711 + 0.40821073

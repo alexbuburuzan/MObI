@@ -17,8 +17,7 @@ import multiprocessing
 from ldm.util import instantiate_from_config
 from ldm.models.diffusion.ddim import DDIMSampler
 from ldm.models.diffusion.plms import PLMSSampler
-from ldm.data.utils import draw_projected_bbox, visualize_lidar, focus_on_bbox, postprocess_range
-from ldm.data.box_np_ops import points_in_bbox_corners
+from ldm.data.utils import postprocess_range, un_norm_clip
 from ldm.data.lidar_converter import LidarConverter
 
 from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
@@ -410,35 +409,59 @@ def main():
                         for i in range(batch_size):
                             if opt.save_pred_grids:
                                 grid_vis = pred_grid[i].transpose(1, 2, 0)[..., ::-1]
-                                cv2.imwrite(os.path.join(camera_path, 'grid-' + segment_id_batch[i] + '_img.png'), grid_vis)
+                                os.makedirs(os.path.join(camera_path, "grid"), exist_ok=True)
+                                cv2.imwrite(os.path.join(camera_path, "grid", segment_id_batch[i] + f'_grid_seed{opt.seed}.png'), grid_vis)
 
                             if opt.save_samples:
                                 patch_pred = log["image_sample"][[i]]
-                                left, top, crop_W, crop_H = batch["image"]["orig"]["crop"][i]
-
-                                patch_pred = F.interpolate(patch_pred, (crop_H, crop_W), mode='bilinear')
-                                patch_pred = patch_pred[0].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
-
+                                patch_gt = batch["image"]["GT"][[i]]
+                                object_ref = batch["image"]["cond"]["ref_image"][[i]]
                                 image = batch["image"]["orig"]["image"][i].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
                                 mask = batch["image"]["orig"]["mask"][i].cpu().numpy()
                                 file_name = batch["image"]["orig"]["file_name"][i]
+                                left, top, crop_W, crop_H = batch["image"]["orig"]["crop"][i]
 
+                                patch_gt = F.interpolate(patch_gt, (crop_H, crop_W), mode='bilinear')
+                                patch_gt = patch_gt[0].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
+                                patch_gt = (((patch_gt + 1.0) / 2.0) * 255).astype(np.uint8)
+
+                                patch_pred = F.interpolate(patch_pred, (crop_H, crop_W), mode='bilinear')
+                                patch_pred = patch_pred[0].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
                                 patch_pred = (((patch_pred + 1.0) / 2.0) * 255).astype(np.uint8)
-                                image = (((image + 1.0) / 2.0) * 255).astype(np.uint8)
 
                                 image_pred = np.zeros_like(image)
                                 image_pred[top:top+crop_H, left:left+crop_W] = patch_pred
-
+                                image = (((image + 1.0) / 2.0) * 255).astype(np.uint8)
                                 image_recon = np.where(mask[..., None], image, image_pred)
+
+                                mask_coords = np.nonzero(1 - mask)
+                                y1, y2 = mask_coords[0].min(), mask_coords[0].max()
+                                x1, x2 = mask_coords[1].min(), mask_coords[1].max()
+                                object_pred = cv2.resize(image_pred[y1:y2, x1:x2, :], (224, 224))
+
+                                object_ref = un_norm_clip(object_ref, size=(224, 224))
+                                object_ref = object_ref[0].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
+                                object_ref = (object_ref * 255).astype(np.uint8)
+
+                                # save samples
                                 os.makedirs(os.path.join(sample_path, segment_id_batch[i]), exist_ok=True)
                                 cv2.imwrite(os.path.join(sample_path, segment_id_batch[i], f'{file_name}_seed{opt.seed}.png'), image_recon)
+
+                                for file in "object_pred", "object_ref", "patch_gt", "patch_pred":
+                                    os.makedirs(os.path.join(camera_path, file), exist_ok=True)
+
+                                cv2.imwrite(os.path.join(camera_path, "object_pred", f"{segment_id_batch[i]}_object_pred_seed{opt.seed}.png"), object_pred)
+                                cv2.imwrite(os.path.join(camera_path, "object_ref", f"{segment_id_batch[i]}_object_ref_seed{opt.seed}.png"), object_ref)
+                                cv2.imwrite(os.path.join(camera_path, "patch_gt", f"{segment_id_batch[i]}_gt_seed{opt.seed}.png"), patch_gt)
+                                cv2.imwrite(os.path.join(camera_path, "patch_pred", f"{segment_id_batch[i]}_pred_seed{opt.seed}.png"), patch_pred)
 
                     if model.use_lidar:
                         pred_grid = log["lidar_input-pred-rec"].cpu().numpy()
                         for i in range(batch_size):
                             if opt.save_pred_grids:
                                 grid_vis = pred_grid[i].transpose(1, 2, 0)[..., ::-1]
-                                cv2.imwrite(os.path.join(lidar_path, 'grid-' + segment_id_batch[i] + f'_lidar_seed{opt.seed}.png'), grid_vis)
+                                os.makedirs(os.path.join(lidar_path, "grid"), exist_ok=True)
+                                cv2.imwrite(os.path.join(lidar_path, "grid", segment_id_batch[i] + f'_grid_seed{opt.seed}.png'), grid_vis)
 
                         if opt.save_samples:
                             lidar_pred = log["lidar_sample"]
