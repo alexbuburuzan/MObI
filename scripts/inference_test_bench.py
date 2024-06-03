@@ -406,8 +406,8 @@ def main():
                                 mask = batch["image"]["orig"]["mask"][i].cpu().numpy()
                                 file_name = batch["image"]["orig"]["file_name"][i]
 
-                                patch_pred = (((patch_pred + 1) / 2) * 255).astype(np.uint8)
-                                image = (((image + 1) / 2) * 255).astype(np.uint8)
+                                patch_pred = (((patch_pred + 1.0) / 2.0) * 255).astype(np.uint8)
+                                image = (((image + 1.0) / 2.0) * 255).astype(np.uint8)
 
                                 image_pred = np.zeros_like(image)
                                 image_pred[top:top+crop_H, left:left+crop_W] = patch_pred
@@ -439,8 +439,8 @@ def main():
                             for i in range(batch_size):
                                 pred_points, _ = lidar_converter.range2pcd(
                                     lidar_pred[i], 
-                                    batch['lidar']["range_pitch"].cpu().numpy(),
-                                    batch['lidar']["range_yaw"].cpu().numpy(),
+                                    batch['lidar']["range_pitch"][i].cpu().numpy(),
+                                    batch['lidar']["range_yaw"][i].cpu().numpy(),
                                 )
 
                                 os.makedirs(os.path.join(sample_path, segment_id_batch[i]), exist_ok=True)
