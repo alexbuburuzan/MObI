@@ -252,7 +252,7 @@ def visualize_lidar(
     thickness: int = 1,
     bbox_color=(0, 165, 255),
     points_color=(0, 128, 128),
-    dpi: int = 40,  # Set to desired resolution
+    dpi: int = 20,  # Set to desired resolution
 ) -> np.ndarray:
     bbox = copy.deepcopy(bboxes)
     lidar = lidar.copy() if lidar is not None else None
