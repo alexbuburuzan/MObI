@@ -465,7 +465,7 @@ def main():
 
                         if opt.save_samples:
                             lidar_pred = log["lidar_sample"]
-                            mask = batch["lidar"]["range_mask"]
+                            mask = log["lidar_mask"]
                             lidar_pred = -mask + (1 - mask) * lidar_pred
 
                             lidar_pred = postprocess_range(

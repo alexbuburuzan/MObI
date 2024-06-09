@@ -1,4 +1,4 @@
-use_camera: True
+use_camera: False
 use_lidar: True
 
 image_height: 256
@@ -6,10 +6,12 @@ image_width: 256
 latent_size: 32 # image_wifth // 8 
 object_area_crop: 0.2
 
-range_height: 64
-range_width: 1096 # use feature map crop instead of range crop
+range_height: 256
+range_width: 256 # use feature map crop instead of range crop
 
 batch_size: 1
+range_object_norm: True
+range_object_norm_scale: 10
 
 classes:
   - car
@@ -46,9 +48,12 @@ model:
     monitor: val/loss_simple_ema
     u_cond_percent: 0.2
     scale_factor: 0.18215
+    lidar_scale_factor: 0.18215
     use_ema: False
     use_camera: ${use_camera}
     use_lidar: ${use_lidar}
+    range_object_norm: ${range_object_norm}
+    range_object_norm_scale: ${range_object_norm_scale}
 
     scheduler_config: # 10000 warmup steps
       target: ldm.lr_scheduler.LambdaLinearScheduler
@@ -104,21 +109,25 @@ model:
           target: torch.nn.Identity
 
     lidar_stage_config:
-      target: ldm.models.lidar_diffusion.VQModelInterface
+      target: ldm.models.autoencoder.AutoencoderKL
       params:
-        embed_dim: 8
-        n_embed: 16384
-        ckpt_path: checkpoints/f_c2_p4/model.ckpt
+        embed_dim: 4
+        monitor: val/rec_loss
+        ckpt_path: "checkpoints/image_vae.ckpt"
         ddconfig:
-          double_z: false
-          z_channels: 8
-          in_channels: 1
-          out_ch: 1
-          ch: 64
-          ch_mult: [1,2,2,4]
-          strides: [[1,2],[2,2],[2,2]]
+          double_z: true
+          z_channels: 4
+          resolution: ${image_height}
+          in_channels: 3
+          out_ch: 3
+          ch: 128
+          ch_mult:
+          - 1
+          - 2
+          - 4
+          - 4
           num_res_blocks: 2
-          attn_levels: []
+          attn_resolutions: []
           dropout: 0.0
         lossconfig:
           target: torch.nn.Identity
@@ -152,6 +161,9 @@ data:
               range_width: ${range_width}
               object_classes: ${classes}
               random_range_crop: False
+              min_lidar_points: 300
+              range_object_norm: ${range_object_norm}
+              range_object_norm_scale: ${range_object_norm_scale}
       validation:
           target: ldm.data.nuscenes.NuScenesDataset
           params:
@@ -171,6 +183,9 @@ data:
               range_width: ${range_width}
               object_classes: ${classes}
               random_range_crop: False
+              min_lidar_points: 300
+              range_object_norm: ${range_object_norm}
+              range_object_norm_scale: ${range_object_norm_scale}
       test:
           target: ldm.data.nuscenes.NuScenesDataset
           params:
@@ -189,6 +204,9 @@ data:
               range_height: ${range_height}
               range_width: ${range_width}
               object_classes: ${classes}
+              min_lidar_points: 300
+              range_object_norm: ${range_object_norm}
+              range_object_norm_scale: ${range_object_norm_scale}
       rotation_test:
           target: ldm.data.nuscenes.NuScenesDataset
           params:
@@ -208,6 +226,8 @@ data:
               range_height: ${range_height}
               range_width: ${range_width}
               rot_every_angle: 30
+              range_object_norm: ${range_object_norm}
+              range_object_norm_scale: ${range_object_norm_scale}
               specific_scene: "06be0e3b665c44fa8d17d9f4770bdf9c"
               object_classes:
                 - car

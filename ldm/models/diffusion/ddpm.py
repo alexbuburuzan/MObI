@@ -447,12 +447,18 @@ class LatentDiffusion(DDPM):
                  cond_stage_forward=None,
                  conditioning_key=None,
                  scale_factor=1.0,
+                 lidar_scale_factor=1.0,
                  scale_by_std=False,
                  use_camera=True,
                  use_lidar=False,
+                 range_object_norm=False,
+                 range_object_norm_scale=5,
                  *args, **kwargs):
         self.num_timesteps_cond = default(num_timesteps_cond, 1)
         self.scale_by_std = scale_by_std
+        self.range_object_norm = range_object_norm
+        self.range_object_norm_scale = range_object_norm_scale
+
         assert self.num_timesteps_cond <= kwargs['timesteps']
         # for backwards compatibility after implementation of DiffusionWrapper
         if conditioning_key is None:
@@ -477,6 +483,7 @@ class LatentDiffusion(DDPM):
             self.num_downs = 0
         if not scale_by_std:
             self.scale_factor = scale_factor
+            self.lidar_scale_factor = lidar_scale_factor
         else:
             self.register_buffer('scale_factor', torch.tensor(scale_factor))
 
@@ -807,11 +814,11 @@ class LatentDiffusion(DDPM):
             lidar_data["cond"]["ref_bbox"][..., 1] += pad / self.image_size
             c, _ = self.process_conditioning(lidar_data["cond"], force_c_encode=force_c_encode)
             out["cond"].append(c)
-            out["z_lidar"] = z_lidar[:, :8, ...]
+            out["z_lidar"] = z_lidar[:, :4, ...]
 
             if return_vae_rec:
                 out["lidar_rec"] = self.decode_first_stage(
-                    z_lidar[:, :8, ...], module_name="lidar_stage_model"
+                    z_lidar[:, :4, ...], module_name="lidar_stage_model"
                 )
                 out["lidar_rec"] = torch.clamp(out["lidar_rec"], -1., 1.)
 
@@ -827,6 +834,7 @@ class LatentDiffusion(DDPM):
         
     @torch.no_grad()
     def decode_first_stage(self, z, predict_cids=False, force_not_quantize=False, module_name="first_stage_model"):
+        assert module_name in ["first_stage_model", "lidar_stage_model"]
         module = getattr(self, module_name)
         if predict_cids:
             if z.dim() == 4:
@@ -836,6 +844,8 @@ class LatentDiffusion(DDPM):
 
         if module_name == "first_stage_model":
             z = 1. / self.scale_factor * z
+        else:
+            z = 1. / self.lidar_scale_factor * z
 
         if hasattr(self, "split_input_params"):
             if self.split_input_params["patch_distributed_vq"]:
@@ -885,7 +895,6 @@ class LatentDiffusion(DDPM):
                 return module.decode(z, force_not_quantize=predict_cids or force_not_quantize)
             else:
                 if self.first_stage_key=='inpaint':
-                    assert module_name != "lidar_stage_model"
                     return module.decode(z[:,:4,:,:])
                 else:
                     return module.decode(z)
@@ -893,6 +902,7 @@ class LatentDiffusion(DDPM):
 
     # same as above but without decorator
     def differentiable_decode_first_stage(self, z, predict_cids=False, force_not_quantize=False, module_name="first_stage_model"):
+        assert module_name in ["first_stage_model", "lidar_stage_model"]
         module = getattr(self, module_name)
         if predict_cids:
             if z.dim() == 4:
@@ -902,6 +912,8 @@ class LatentDiffusion(DDPM):
 
         if module_name == "first_stage_model":
             z = 1. / self.scale_factor * z
+        else:
+            z = 1. / self.lidar_scale_factor * z
 
         if hasattr(self, "split_input_params"):
             if self.split_input_params["patch_distributed_vq"]:
@@ -1008,19 +1020,21 @@ class LatentDiffusion(DDPM):
             z_inpaint = self.get_first_stage_encoding(encoder_posterior_inpaint, scale_factor=self.scale_factor).detach()
             z_inpaint = torch.cat((z_inpaint, torch.zeros_like(z_inpaint)), dim=1)
 
-            mask_resize = Resize([z.shape[-1], z.shape[-1]])(image_mask)
+            mask_resize = F.interpolate(image_mask, size=z.shape[-1], mode="nearest")
             z_image = torch.cat((z, z_inpaint, mask_resize), dim=1)
         
 
         if self.use_lidar:
             encoder_posterior = self.encode_first_stage(range_gt, module_name="lidar_stage_model")
             # B x 8 x 16 x 128
-            z = self.get_first_stage_encoding(encoder_posterior).detach()
+            z = self.get_first_stage_encoding(encoder_posterior, scale_factor=self.lidar_scale_factor).detach()
+            z = torch.cat((z, torch.zeros_like(z)), dim=1)
 
             encoder_posterior_inpaint = self.encode_first_stage(range_inpaint, module_name="lidar_stage_model")
-            z_inpaint = self.get_first_stage_encoding(encoder_posterior_inpaint).detach()
+            z_inpaint = self.get_first_stage_encoding(encoder_posterior_inpaint, scale_factor=self.lidar_scale_factor).detach()
+            z_inpaint = torch.cat((z_inpaint, torch.zeros_like(z_inpaint)), dim=1)
 
-            mask_resize = Resize([z.shape[-2], z.shape[-1]])(range_mask)
+            mask_resize = F.interpolate(range_mask, size=z.shape[-1], mode="nearest")
             z_lidar = torch.cat((z, z_inpaint, mask_resize), dim=1)
 
         return z_image, z_lidar
@@ -1430,7 +1444,7 @@ class LatentDiffusion(DDPM):
             # h_lidar = F.interpolate(sample, size=(z_lidar.shape[-2], self.image_size), mode='nearest')
             bottom = (sample[1::2].shape[-2] - z_lidar.shape[-2]) // 2
             top = bottom + z_lidar.shape[-2]
-            h_lidar = sample[:, :, bottom:top, :]
+            h_lidar = sample[:, :4, bottom:top, :]
 
             if self.image_size != z_lidar.shape[-1]:
                 # Undo lidar latent crop
@@ -1487,19 +1501,38 @@ class LatentDiffusion(DDPM):
             lidar_sample = self.decode_first_stage(h_lidar, module_name="lidar_stage_model")
             lidar_sample = torch.clamp(lidar_sample, -1., 1.)
 
+            def resize(x, size):
+                # return F.interpolate(x, size=size, mode='nearest')
+                x = x.permute([0, 2, 3, 1])
+                kernel_size = x.shape[1] // size[0]
+                x = x.unfold(1, kernel_size, kernel_size)
+                x = x.reshape(*x.shape[:3], -1)
+                x = x.median(dim=-1).values
+                return x
+
             new_size = (32, lidar_sample.shape[-1])
-            mask = F.interpolate(batch["lidar"]["range_mask"][:, [0]], size=new_size, mode='nearest')
-            inpaint = F.interpolate(batch["lidar"]["range_depth_inpaint"], size=new_size, mode='nearest')
-            sample = F.interpolate(lidar_sample, size=new_size, mode='nearest')
-            input = F.interpolate(batch["lidar"]["range_depth"], size=new_size, mode='nearest')
-            rec = F.interpolate(data["lidar_rec"], size=new_size, mode='nearest')
-            instance_mask = F.interpolate(batch["lidar"]["range_instance_mask"], size=new_size, mode='nearest')
+            mask = resize(batch["lidar"]["range_mask"][:, [0]], size=new_size)
+            inpaint = resize(batch["lidar"]["range_depth_inpaint"], size=new_size)
+            sample = resize(lidar_sample, size=new_size)
+            input = resize(batch["lidar"]["range_depth"], size=new_size)
+            rec = resize(data["lidar_rec"], size=new_size)
+            instance_mask = resize(batch["lidar"]["range_instance_mask"], size=new_size)
 
             log["range_preds"] = torch.cat([input, inpaint, instance_mask, sample], dim=-2)
             log["range_input-rec"] = torch.cat([input, rec], dim=-2)
 
             if return_sample:
-                log["lidar_sample"] = lidar_sample
+                log["lidar_sample"] = sample
+                log["lidar_mask"] = mask
+
+            if self.range_object_norm:
+                sample = torch.atanh(sample) / self.range_object_norm_scale + batch["lidar"]["center_depth"].view(-1, 1, 1)
+                input = torch.atanh(input) / self.range_object_norm_scale + batch["lidar"]["center_depth"].view(-1, 1, 1)
+                rec = torch.atanh(rec) / self.range_object_norm_scale + batch["lidar"]["center_depth"].view(-1, 1, 1)
+
+                sample = torch.clamp(sample, -1., 1.)
+                input = torch.clamp(input, -1., 1.)
+                rec = torch.clamp(rec, -1., 1.)
 
             # Compute metrics
             lidar_metrics = {}

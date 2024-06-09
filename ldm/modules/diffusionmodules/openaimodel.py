@@ -920,7 +920,7 @@ class UNetModel(nn.Module):
         elif self.use_camera:
             h = self.input_blocks[0](h[:, [0, 1, 2, 3, 8, 9, 10, 11, 16]], emb, context)
         elif self.use_lidar:
-            h = self.lidar_in(h, emb, context)
+            h = self.input_blocks[0](h[:, [0, 1, 2, 3, 8, 9, 10, 11, 16]], emb, context)
         hs.append(h)
 
         for module in self.input_blocks[1:]:
@@ -945,7 +945,8 @@ class UNetModel(nn.Module):
             h_camera = self.out(h)
             h = th.cat([h_camera, th.zeros_like(h_camera)], dim=1)
         else:
-            h = self.lidar_out(h)
+            h = self.out(h)
+            h = th.cat([h, th.zeros_like(h)], dim=1)
 
         return h
 
