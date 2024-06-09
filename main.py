@@ -1,3 +1,4 @@
+import cv2
 import argparse, os, sys, datetime, glob, importlib, csv
 import numpy as np
 import time
@@ -189,12 +190,12 @@ def worker_init_fn(_):
 
 class DataModuleFromConfig(pl.LightningDataModule):
     def __init__(self, batch_size, train=None, validation=None, test=None, predict=None,
-                 wrap=False, num_workers=None, shuffle_test_loader=False, use_worker_init_fn=False,
+                 wrap=False, num_workers_per_gpu=None, shuffle_test_loader=False, use_worker_init_fn=False,
                  shuffle_val_dataloader=False, *args, **kwargs):
         super().__init__()
         self.batch_size = batch_size
         self.dataset_configs = dict()
-        self.num_workers = num_workers if num_workers is not None else int(9 * multiprocessing.cpu_count() / 10)
+        self.num_workers = num_workers_per_gpu
         self.use_worker_init_fn = use_worker_init_fn
         if train is not None:
             self.dataset_configs["train"] = train
@@ -569,7 +570,7 @@ if __name__ == "__main__":
             "dirpath": ckptdir,
             "filename": "{epoch:06}",
             "verbose": True,
-            "save_last": True,
+            "save_last": False,
         }
     }
     if hasattr(model, "monitor"):
@@ -603,7 +604,7 @@ if __name__ == "__main__":
         "image_logger": {
             "target": "main.ImageLogger",
             "params": {
-                "batch_frequency": 20,
+                "batch_frequency": 100,
                 "max_images": 8,
                 "clamp": False,
                 "log_on_batch_idx": True,
