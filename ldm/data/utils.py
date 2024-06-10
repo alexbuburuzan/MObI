@@ -426,7 +426,7 @@ def postprocess_range(range_depth, range_depth_orig, crop_left, zero_context=Fal
         range_depth_final.append(
             lidar_converter.undo_default_transforms(
                 crop_left=crop_left[i].item(),
-                range_depth_crop=range_depth[i],
+                range_depth_crop=range_depth[i, 0],
                 range_depth=range_depth_orig[i],
             )[0]
         )

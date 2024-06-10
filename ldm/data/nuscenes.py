@@ -78,6 +78,7 @@ class NuScenesDataset(data.Dataset):
         return_original_image=False,
         range_object_norm=False,
         range_object_norm_scale=5,
+        range_int_norm=False,
     ) -> None:
         self.state = state
         self.ref_aug = ref_aug
@@ -93,6 +94,7 @@ class NuScenesDataset(data.Dataset):
         self.return_original_image = return_original_image
         self.range_object_norm = range_object_norm
         self.range_object_norm_scale = range_object_norm_scale
+        self.range_int_norm = range_int_norm
 
         # Dimensions
         self.image_height = image_height
@@ -300,10 +302,14 @@ class NuScenesDataset(data.Dataset):
         if self.range_object_norm:
             range_depth = torch.tanh((range_depth - center_depth) * self.range_object_norm_scale)
             bbox_range_coords[..., 2] = torch.tanh((bbox_range_coords[..., 2] - center_depth) * self.range_object_norm_scale)
-        range_depth = range_depth.repeat(3, 1, 1)
 
         range_int = ((range_int / 255) - 0.5) * 2
         range_int = get_tensor(normalize=False, toTensor=True)(range_int)
+        if self.range_int_norm:
+            range_int = 1 - torch.exp(-2 * (range_int + 1))
+            range_int = torch.clamp(2 * range_int - 1, -1, 1)
+        
+        range_data = torch.concat([range_depth, range_depth, range_int], dim=0)
 
         # Mask
         range_mask = get_range_inpaint_mask(
@@ -313,16 +319,13 @@ class NuScenesDataset(data.Dataset):
         range_instance_mask = torch.tensor(range_instance_mask).float().unsqueeze(0)
 
         # Inpainted range
-        range_depth_inpaint = range_depth.clone() * range_mask
-        range_int_inpaint = range_int.clone() * range_mask
+        range_data_inpaint = range_data.clone() * range_mask
 
         data = {
-            "range_depth": range_depth,
-            "range_int": range_int,
+            "range_data": range_data,
+            "range_data_inpaint": range_data_inpaint,
             "range_depth_orig": range_depth_orig,
             "range_int_orig": range_int_orig,
-            "range_depth_inpaint": range_depth_inpaint,
-            "range_int_inpaint": range_int_inpaint,
             "range_shift_left": range_shift_left,
             "range_mask": range_mask,
             "range_instance_mask": range_instance_mask,

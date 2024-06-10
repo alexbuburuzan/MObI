@@ -241,7 +241,7 @@ def main():
         action="store_true",
     )
     parser.add_argument(
-        "--save_pred_grids",
+        "--save_visualisations",
         action="store_true",
     )
     opt = parser.parse_args()
@@ -407,7 +407,7 @@ def main():
                     if model.use_camera:
                         pred_grid = log["image_preds"].cpu().numpy()
                         for i in range(batch_size):
-                            if opt.save_pred_grids:
+                            if opt.save_visualisations:
                                 grid_vis = pred_grid[i].transpose(1, 2, 0)[..., ::-1]
                                 os.makedirs(os.path.join(camera_path, "grid"), exist_ok=True)
                                 cv2.imwrite(os.path.join(camera_path, "grid", segment_id_batch[i] + f'_grid_seed{opt.seed}.png'), grid_vis)
@@ -456,20 +456,29 @@ def main():
                                 cv2.imwrite(os.path.join(camera_path, "patch_pred", f"{segment_id_batch[i]}_pred_seed{opt.seed}.png"), patch_pred)
 
                     if model.use_lidar:
-                        pred_grid = log["lidar_input-pred-rec"].cpu().numpy()
                         for i in range(batch_size):
-                            if opt.save_pred_grids:
-                                grid_vis = pred_grid[i].transpose(1, 2, 0)[..., ::-1]
-                                os.makedirs(os.path.join(lidar_path, "grid"), exist_ok=True)
-                                cv2.imwrite(os.path.join(lidar_path, "grid", segment_id_batch[i] + f'_grid_seed{opt.seed}.png'), grid_vis)
+                            if opt.save_visualisations:
+                                pcd_vis = log["lidar_input-pred-rec"][i].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
+                                os.makedirs(os.path.join(lidar_path, "point_clouds"), exist_ok=True)
+                                cv2.imwrite(os.path.join(lidar_path, "point_clouds", segment_id_batch[i] + f'_grid_seed{opt.seed}.png'), pcd_vis)
+
+                                range_depth_vis = log["range_depth_pred"][i].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
+                                range_depth_vis = ((range_depth_vis + 1.0) / 2.0 * 255).astype(np.uint8)
+                                os.makedirs(os.path.join(lidar_path, "range_depth"), exist_ok=True)
+                                cv2.imwrite(os.path.join(lidar_path, "range_depth", segment_id_batch[i] + f'_grid_seed{opt.seed}.png'), range_depth_vis)
+
+                                range_int_vis = log["range_int_pred"][i].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
+                                range_int_vis = ((range_int_vis + 1.0) / 2.0 * 255).astype(np.uint8)
+                                os.makedirs(os.path.join(lidar_path, "range_intensity"), exist_ok=True)
+                                cv2.imwrite(os.path.join(lidar_path, "range_intensity", segment_id_batch[i] + f'_grid_seed{opt.seed}.png'), range_int_vis)
 
                         if opt.save_samples:
-                            lidar_pred = log["lidar_sample"]
+                            lidar_sample_depth = log["lidar_sample_depth"]
                             mask = log["lidar_mask"]
-                            lidar_pred = -mask + (1 - mask) * lidar_pred
+                            lidar_sample_depth = -mask + (1 - mask) * lidar_sample_depth
 
-                            lidar_pred = postprocess_range(
-                                range_depth=lidar_pred,
+                            lidar_sample_depth = postprocess_range(
+                                range_depth=lidar_sample_depth,
                                 range_depth_orig=batch["lidar"]["range_depth_orig"],
                                 crop_left=batch["lidar"]["range_shift_left"],
                                 zero_context=True,
@@ -478,7 +487,7 @@ def main():
                             lidar_converter = LidarConverter()
                             for i in range(batch_size):
                                 pred_points, _ = lidar_converter.range2pcd(
-                                    lidar_pred[i], 
+                                    lidar_sample_depth[i], 
                                     batch['lidar']["range_pitch"][i].cpu().numpy(),
                                     batch['lidar']["range_yaw"][i].cpu().numpy(),
                                 )
