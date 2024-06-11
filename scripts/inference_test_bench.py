@@ -381,8 +381,8 @@ def main():
                             unconditional_conditioning=uc,
                             eta=opt.ddim_eta,
                             x_T=start_code,
-                            inpaint_image=data["z"][:,8:16],
-                            inpaint_mask=data["z"][:,[16]]
+                            inpaint_image=data["z"][:,4:8],
+                            inpaint_mask=data["z"][:,[8]]
                         )
                     else:
                         samples, _ = sampler.sample(
@@ -396,8 +396,8 @@ def main():
                             eta=opt.ddim_eta,
                             x_T=start_code,
                             test_model_kwargs={
-                                "inpaint_image": data["z"][:,8:16],
-                                "inpaint_mask": data["z"][:,[16]]
+                                "inpaint_image": data["z"][:,4:8],
+                                "inpaint_mask": data["z"][:,[8]]
                             }
                         )
 

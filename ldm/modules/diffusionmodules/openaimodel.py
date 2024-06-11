@@ -18,7 +18,6 @@ from ldm.modules.diffusionmodules.util import (
     timestep_embedding,
 )
 from ldm.modules.attention import SpatialTransformer
-from ldm.util import cat_interleave
 
 
 # dummy replace
@@ -638,21 +637,6 @@ class UNetModel(nn.Module):
         self.use_lidar = use_lidar
         self.multimodal = (use_camera & use_lidar)
 
-        if use_lidar:
-            self.lidar_in = TimestepEmbedSequential(
-                conv_nd(dims, 17, model_channels, 3, padding=1),
-                ResBlock(
-                    model_channels,
-                    time_embed_dim,
-                    dropout,
-                    out_channels=model_channels,
-                    dims=dims,
-                    use_checkpoint=use_checkpoint,
-                    use_scale_shift_norm=use_scale_shift_norm,
-                )
-            )
-
-
         if self.add_conv_in_front_of_unet:
             self.add_resbolck = nn.ModuleList(
                 [
@@ -851,14 +835,6 @@ class UNetModel(nn.Module):
             nn.SiLU(),
             zero_module(conv_nd(dims, model_channels, out_channels, 3, padding=1)),
         )
-
-        if use_lidar:
-            self.lidar_out = nn.Sequential(
-                normalization(ch),
-                nn.SiLU(),
-                zero_module(conv_nd(dims, model_channels, 8, 3, padding=1)),
-            )
-
         if self.predict_codebook_ids:
             self.id_predictor = nn.Sequential(
             normalization(ch),
@@ -908,22 +884,7 @@ class UNetModel(nn.Module):
             for module in self.add_resbolck:
                 h = module(h, emb, context)
 
-        # Modality-dependent projection
-        if self.use_camera and self.use_lidar:
-            h_camera = h[::2][:, [0, 1, 2, 3, 8, 9, 10, 11, 16]]
-            h_lidar = h[1::2]
-
-            h = cat_interleave([
-                self.input_blocks[0](h_camera, emb[::2], context[::2]),
-                self.lidar_in(h_lidar, emb[1::2], context[1::2]),
-            ])
-        elif self.use_camera:
-            h = self.input_blocks[0](h[:, [0, 1, 2, 3, 8, 9, 10, 11, 16]], emb, context)
-        elif self.use_lidar:
-            h = self.input_blocks[0](h[:, [0, 1, 2, 3, 8, 9, 10, 11, 16]], emb, context)
-        hs.append(h)
-
-        for module in self.input_blocks[1:]:
+        for module in self.input_blocks:
             h = module(h, emb, context)
             hs.append(h)
         h = self.middle_block(h, emb, context)
@@ -933,22 +894,8 @@ class UNetModel(nn.Module):
         h = h.type(x.dtype)
         if self.predict_codebook_ids:
             return self.id_predictor(h)
-        
-        # Modality-dependent projection
-        if self.use_camera and self.use_lidar:
-            h_camera = self.out(h[::2])
-            h_camera = th.cat([h_camera, th.zeros_like(h_camera)], dim=1)
-
-            h_lidar = self.lidar_out(h[1::2])
-            h = cat_interleave([h_camera, h_lidar])
-        elif self.use_camera:
-            h_camera = self.out(h)
-            h = th.cat([h_camera, th.zeros_like(h_camera)], dim=1)
         else:
-            h = self.out(h)
-            h = th.cat([h, th.zeros_like(h)], dim=1)
-
-        return h
+            return self.out(h)
 
 
 class EncoderUNetModel(nn.Module):
@@ -1167,4 +1114,3 @@ class EncoderUNetModel(nn.Module):
         else:
             h = h.type(x.dtype)
             return self.out(h)
-

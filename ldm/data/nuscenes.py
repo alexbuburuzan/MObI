@@ -59,8 +59,8 @@ class NuScenesDataset(data.Dataset):
         ref_mode="same-ref", # same-ref, track-ref, random-ref, no-ref
         image_height=512,
         image_width=512,
-        range_height=64,
-        range_width=1096,
+        range_height=512,
+        range_width=512,
         reference_image_min_h=100,
         reference_image_max_h=800,
         reference_image_min_w=100,

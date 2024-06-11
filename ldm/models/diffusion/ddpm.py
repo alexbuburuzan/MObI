@@ -806,7 +806,7 @@ class LatentDiffusion(DDPM):
             # out["z"].append(
             #     F.interpolate(z_lidar[..., left:right], size=self.image_size, mode="nearest")
             # )
-            # pad top and bottom instead of resize
+            # pad top and bottom if lidar feature map is smaller than image latent
             out["z"].append(
                 F.pad(z_lidar[..., left:right], (0, 0, pad, pad), mode="constant", value=0)
             )
@@ -1013,31 +1013,23 @@ class LatentDiffusion(DDPM):
 
         if self.use_camera:
             encoder_posterior = self.encode_first_stage(image_gt)
-            # B x 4 x 64 x 64
             z = self.get_first_stage_encoding(encoder_posterior, scale_factor=self.scale_factor).detach()
-            # pad with zeros -> B x 8 x 64 x 64
-            z = torch.cat((z, torch.zeros_like(z)), dim=1)
 
             encoder_posterior_inpaint = self.encode_first_stage(image_inpaint)
             z_inpaint = self.get_first_stage_encoding(encoder_posterior_inpaint, scale_factor=self.scale_factor).detach()
-            z_inpaint = torch.cat((z_inpaint, torch.zeros_like(z_inpaint)), dim=1)
 
-            mask_resize = F.interpolate(image_mask, size=z.shape[-1], mode="nearest")
-            z_image = torch.cat((z, z_inpaint, mask_resize), dim=1)
-        
+            mask_resized = F.interpolate(image_mask, size=z.shape[-1], mode="nearest")
+            z_image = torch.cat((z, z_inpaint, mask_resized), dim=1)
 
         if self.use_lidar:
             encoder_posterior = self.encode_first_stage(range_gt, module_name="lidar_stage_model")
-            # B x 8 x 16 x 128
             z = self.get_first_stage_encoding(encoder_posterior, scale_factor=self.lidar_scale_factor).detach()
-            z = torch.cat((z, torch.zeros_like(z)), dim=1)
 
             encoder_posterior_inpaint = self.encode_first_stage(range_inpaint, module_name="lidar_stage_model")
             z_inpaint = self.get_first_stage_encoding(encoder_posterior_inpaint, scale_factor=self.lidar_scale_factor).detach()
-            z_inpaint = torch.cat((z_inpaint, torch.zeros_like(z_inpaint)), dim=1)
 
-            mask_resize = F.interpolate(range_mask, size=z.shape[-1], mode="nearest")
-            z_lidar = torch.cat((z, z_inpaint, mask_resize), dim=1)
+            mask_resized = F.interpolate(range_mask, size=z.shape[-1], mode="nearest")
+            z_lidar = torch.cat((z, z_inpaint, mask_resized), dim=1)
 
         return z_image, z_lidar
 
@@ -1186,9 +1178,9 @@ class LatentDiffusion(DDPM):
     def p_losses(self, x_start, cond, t, noise=None, ):
         if self.first_stage_key == 'inpaint':
             # x_start=x_start[:,:4,:,:]
-            noise = default(noise, lambda: torch.randn_like(x_start[:,:8,:,:]))
-            x_noisy = self.q_sample(x_start=x_start[:,:8,:,:], t=t, noise=noise)
-            x_noisy = torch.cat((x_noisy,x_start[:,8:,:,:]),dim=1)
+            noise = default(noise, lambda: torch.randn_like(x_start[:,:4,:,:]))
+            x_noisy = self.q_sample(x_start=x_start[:,:4,:,:], t=t, noise=noise)
+            x_noisy = torch.cat((x_noisy,x_start[:,4:,:,:]),dim=1)
         else:
             noise = default(noise, lambda: torch.randn_like(x_start))
             x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
@@ -1430,7 +1422,7 @@ class LatentDiffusion(DDPM):
         h_camera, h_lidar = None, None
 
         if self.use_camera and self.use_lidar:
-            h_camera = sample[::2][:, :4, :, :]
+            h_camera = sample[::2]
             # h_lidar = F.interpolate(sample[1::2], size=(z_lidar.shape[-2], self.image_size), mode='nearest')
             bottom = (sample[1::2].shape[-2] - z_lidar.shape[-2]) // 2
             top = bottom + z_lidar.shape[-2]
@@ -1441,12 +1433,12 @@ class LatentDiffusion(DDPM):
                 z_lidar[..., z_lidar.shape[-1]//2 - self.image_size//2 :z_lidar.shape[-1]//2 + self.image_size//2] = h_lidar
                 h_lidar = z_lidar
         elif self.use_camera:
-            h_camera = sample[:, :4, :, :]
+            h_camera = sample
         else:
             # h_lidar = F.interpolate(sample, size=(z_lidar.shape[-2], self.image_size), mode='nearest')
             bottom = (sample[1::2].shape[-2] - z_lidar.shape[-2]) // 2
             top = bottom + z_lidar.shape[-2]
-            h_lidar = sample[:, :4, bottom:top, :]
+            h_lidar = sample[:, :, bottom:top, :]
 
             if self.image_size != z_lidar.shape[-1]:
                 # Undo lidar latent crop
@@ -1469,7 +1461,7 @@ class LatentDiffusion(DDPM):
             if self.first_stage_key=='inpaint':
                 samples, _ = self.sample_log(
                     cond=data["cond"],batch_size=data['z'].shape[0],ddim=(ddim_steps is not None),
-                    ddim_steps=ddim_steps,eta=ddim_eta,rest=data['z'][:,8:,:,:]
+                    ddim_steps=ddim_steps,eta=ddim_eta,rest=data['z'][:,4:,:,:]
                 )   
                 h_camera, h_lidar = self.decode_sample(samples, data.get("z_lidar"))
 
