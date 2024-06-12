@@ -1534,11 +1534,12 @@ class LatentDiffusion(DDPM):
                 # input_depth = torch.clamp(torch.atanh(input_depth) / self.range_object_norm_scale + center_depth, -1, 1)
                 # rec_depth = torch.clamp(torch.atanh(rec_depth) / self.range_object_norm_scale + center_depth, -1, 1)
 
-                min_depth_obj = batch["lidar"]["min_depth_obj"].view(-1, 1, 1, 1)
-                max_depth_obj = batch["lidar"]["max_depth_obj"].view(-1, 1, 1, 1)
-                sample_depth = inverse_depth_normalization(sample_depth, min_depth_obj, max_depth_obj, alpha=self.range_object_norm_scale)
-                input_depth = inverse_depth_normalization(input_depth, min_depth_obj, max_depth_obj, alpha=self.range_object_norm_scale)
-                rec_depth = inverse_depth_normalization(rec_depth, min_depth_obj, max_depth_obj, alpha=self.range_object_norm_scale)
+                for i in range(sample_depth.shape[0]):
+                    min_depth_obj = batch["lidar"]["min_depth_obj"][i]
+                    max_depth_obj = batch["lidar"]["max_depth_obj"][i]
+                    sample_depth[i] = inverse_depth_normalization(sample_depth[i], min_depth_obj, max_depth_obj, alpha=self.range_object_norm_scale)
+                    input_depth[i] = inverse_depth_normalization(input_depth[i], min_depth_obj, max_depth_obj, alpha=self.range_object_norm_scale)
+                    rec_depth[i] = inverse_depth_normalization(rec_depth[i], min_depth_obj, max_depth_obj, alpha=self.range_object_norm_scale)
 
             if self.range_int_norm:
                 sample_int = torch.clamp(-0.5 * torch.log(1 - (sample_int + 1) / 2) - 1, -1, 1)
