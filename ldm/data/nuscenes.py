@@ -18,9 +18,9 @@ from ldm.data.utils import (
     rotate_bbox,
     translate_bbox,
     get_2d_bbox,
-    get_camera_coords,
     get_inpaint_mask,
     get_range_inpaint_mask,
+    depth_normalization,
 )
 from ldm.data.lidar_converter import LidarConverter
 
@@ -77,7 +77,7 @@ class NuScenesDataset(data.Dataset):
         num_samples_per_class=None,
         return_original_image=False,
         range_object_norm=False,
-        range_object_norm_scale=5,
+        range_object_norm_scale=0.75,
         range_int_norm=False,
     ) -> None:
         self.state = state
@@ -295,13 +295,16 @@ class NuScenesDataset(data.Dataset):
         bbox_range_coords = torch.tensor(bbox_range_coords).float()
         bbox_range_coords[..., 0] /= self.range_width
         bbox_range_coords[..., 1] /= self.range_height
-        center_depth = bbox_range_coords[:, 2].mean()
+        min_depth_obj = bbox_range_coords[:, 2].min()
+        max_depth_obj = bbox_range_coords[:, 2].max()
 
         # Normalise range data
         range_depth = get_tensor(normalize=False, toTensor=True)(range_depth)
         if self.range_object_norm:
-            range_depth = torch.tanh((range_depth - center_depth) * self.range_object_norm_scale)
-            bbox_range_coords[..., 2] = torch.tanh((bbox_range_coords[..., 2] - center_depth) * self.range_object_norm_scale)
+            # range_depth = torch.tanh((range_depth - center_depth) * self.range_object_norm_scale)
+            # bbox_range_coords[..., 2] = torch.tanh((bbox_range_coords[..., 2] - center_depth) * self.range_object_norm_scale)
+            range_depth = depth_normalization(range_depth, min_depth_obj, max_depth_obj, alpha=self.range_object_norm_scale)
+            bbox_range_coords[..., 2] = depth_normalization(bbox_range_coords[..., 2], min_depth_obj, max_depth_obj, alpha=self.range_object_norm_scale)
 
         range_int = ((range_int / 255) - 0.5) * 2
         range_int = get_tensor(normalize=False, toTensor=True)(range_int)
@@ -331,7 +334,8 @@ class NuScenesDataset(data.Dataset):
             "range_instance_mask": range_instance_mask,
             "range_pitch": range_pitch,
             "range_yaw": range_yaw,
-            "center_depth": center_depth,
+            "min_depth_obj": min_depth_obj,
+            "max_depth_obj": max_depth_obj,
             "cond": {
                 "ref_bbox": bbox_range_coords,
             }

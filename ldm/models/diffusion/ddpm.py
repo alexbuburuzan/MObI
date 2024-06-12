@@ -25,7 +25,7 @@ from ldm.models.autoencoder import IdentityFirstStage, AutoencoderKL
 from ldm.models.lidar_diffusion import VQModelInterface
 from ldm.modules.diffusionmodules.util import make_beta_schedule, extract_into_tensor, noise_like
 from ldm.models.diffusion.ddim import DDIMSampler
-from ldm.data.utils import get_camera_vis, get_lidar_vis
+from ldm.data.utils import get_camera_vis, get_lidar_vis, inverse_depth_normalization
 from torchvision.transforms import Resize
 
 import random
@@ -452,7 +452,7 @@ class LatentDiffusion(DDPM):
                  use_camera=True,
                  use_lidar=False,
                  range_object_norm=False,
-                 range_object_norm_scale=10,
+                 range_object_norm_scale=0.75,
                  range_int_norm=False,
                  *args, **kwargs):
         self.num_timesteps_cond = default(num_timesteps_cond, 1)
@@ -1529,10 +1529,16 @@ class LatentDiffusion(DDPM):
                 log["lidar_mask"] = mask
 
             if self.range_object_norm:
-                center_depth = batch["lidar"]["center_depth"].view(-1, 1, 1, 1)
-                sample_depth = torch.clamp(torch.atanh(sample_depth) / self.range_object_norm_scale + center_depth, -1, 1)
-                input_depth = torch.clamp(torch.atanh(input_depth) / self.range_object_norm_scale + center_depth, -1, 1)
-                rec_depth = torch.clamp(torch.atanh(rec_depth) / self.range_object_norm_scale + center_depth, -1, 1)
+                # center_depth = batch["lidar"]["center_depth"].view(-1, 1, 1, 1)
+                # sample_depth = torch.clamp(torch.atanh(sample_depth) / self.range_object_norm_scale + center_depth, -1, 1)
+                # input_depth = torch.clamp(torch.atanh(input_depth) / self.range_object_norm_scale + center_depth, -1, 1)
+                # rec_depth = torch.clamp(torch.atanh(rec_depth) / self.range_object_norm_scale + center_depth, -1, 1)
+
+                min_depth_obj = batch["lidar"]["min_depth_obj"].view(-1, 1, 1, 1)
+                max_depth_obj = batch["lidar"]["max_depth_obj"].view(-1, 1, 1, 1)
+                sample_depth = inverse_depth_normalization(sample_depth, min_depth_obj, max_depth_obj, alpha=self.range_object_norm_scale)
+                input_depth = inverse_depth_normalization(input_depth, min_depth_obj, max_depth_obj, alpha=self.range_object_norm_scale)
+                rec_depth = inverse_depth_normalization(rec_depth, min_depth_obj, max_depth_obj, alpha=self.range_object_norm_scale)
 
             if self.range_int_norm:
                 sample_int = torch.clamp(-0.5 * torch.log(1 - (sample_int + 1) / 2) - 1, -1, 1)

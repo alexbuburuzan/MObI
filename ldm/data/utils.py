@@ -432,3 +432,49 @@ def postprocess_range(range_depth, range_depth_orig, crop_left, zero_context=Fal
         )
 
     return np.stack(range_depth_final)
+
+
+def depth_normalization(depth, min_d, max_d, alpha=0.75):
+    assert -1 <= min_d < max_d <= 1, "min_d and max_d must be in the range -1 to 1 and min_d < max_d"
+    assert 0 < alpha <= 1, "alpha must be in the range 0 to 1"
+    
+    # Create a tensor to store the normalized depth values
+    normalized_depth = torch.empty_like(depth)
+    min_d, max_d = min_d.to(depth.dtype), max_d.to(depth.dtype)
+    
+    # Normalize values between min_d and max_d to [-alpha, alpha]
+    mask_mid = (depth >= min_d) & (depth <= max_d)
+    normalized_depth[mask_mid] = -alpha + 2 * alpha * (depth[mask_mid] - min_d) / (max_d - min_d)
+    
+    # Normalize values between -1 and min_d to [-1, -alpha]
+    mask_low = (depth >= -1) & (depth < min_d)
+    normalized_depth[mask_low] = -1 + -(alpha - 1) * (depth[mask_low] + 1) / (min_d + 1)
+    
+    # Normalize values between max_d and 1 to [alpha, 1]
+    mask_high = (depth > max_d) & (depth <= 1)
+    normalized_depth[mask_high] = alpha + (1 - alpha) * (depth[mask_high] - max_d) / (1 - max_d)
+    
+    return normalized_depth
+
+
+def inverse_depth_normalization(normalized_depth, min_d, max_d, alpha=0.75):
+    assert -1 <= min_d < max_d <= 1, "min_d and max_d must be in the range -1 to 1 and min_d < max_d"
+    assert 0 < alpha <= 1, "alpha must be in the range 0 to 1"
+    
+    # Create a tensor to store the original depth values
+    depth = torch.empty_like(normalized_depth)
+    min_d, max_d = min_d.to(depth.dtype), max_d.to(depth.dtype)
+    
+    # Inverse normalization for values between -alpha and alpha to [min_d, max_d]
+    mask_mid = (normalized_depth >= -alpha) & (normalized_depth <= alpha)
+    depth[mask_mid] = min_d + (normalized_depth[mask_mid] + alpha) * (max_d - min_d) / (2 * alpha)
+    
+    # Inverse normalization for values between -1 and -alpha to [-1, min_d]
+    mask_low = (normalized_depth >= -1) & (normalized_depth < -alpha)
+    depth[mask_low] = -1 + -(normalized_depth[mask_low] + 1) * (min_d + 1) / (alpha - 1)
+    
+    # Inverse normalization for values between alpha and 1 to [max_d, 1]
+    mask_high = (normalized_depth > alpha) & (normalized_depth <= 1)
+    depth[mask_high] = max_d + (normalized_depth[mask_high] - alpha) * (1 - max_d) / (1 - alpha)
+    
+    return depth
