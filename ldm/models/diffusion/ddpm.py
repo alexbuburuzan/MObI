@@ -1524,9 +1524,9 @@ class LatentDiffusion(DDPM):
             log["range_int_pred"] = torch.cat([input_int, inpaint_int, instance_mask, sample_int, rec_int], dim=-2)
 
             if return_sample:
-                log["lidar_sample_depth"] = sample_depth
-                log["lidar_sample_int"] = sample_int
-                log["lidar_mask"] = mask
+                log["range_sample_depth"] = sample_depth
+                log["range_sample_int"] = sample_int
+                log["range_bbox_mask"] = mask
 
             if self.range_object_norm:
                 # center_depth = batch["lidar"]["center_depth"].view(-1, 1, 1, 1)

@@ -17,8 +17,9 @@ import multiprocessing
 from ldm.util import instantiate_from_config
 from ldm.models.diffusion.ddim import DDIMSampler
 from ldm.models.diffusion.plms import PLMSSampler
-from ldm.data.utils import postprocess_range, un_norm_clip
+from ldm.data.utils import postprocess_range_depth_int, un_norm_clip
 from ldm.data.lidar_converter import LidarConverter
+from ldm.data.box_np_ops import points_in_bbox_corners
 
 from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
 from transformers import AutoFeatureExtractor
@@ -473,24 +474,52 @@ def main():
                                 cv2.imwrite(os.path.join(lidar_path, "range_intensity", segment_id_batch[i] + f'_grid_seed{opt.seed}.png'), range_int_vis)
 
                         if opt.save_samples:
-                            lidar_sample_depth = log["lidar_sample_depth"]
-                            mask = log["lidar_mask"]
-                            lidar_sample_depth = -mask + (1 - mask) * lidar_sample_depth
+                            mask = log["range_bbox_mask"]
+                            # range_sample_depth = -mask + (1 - mask) * range_sample_depth
+                            pitch = batch['lidar']["range_pitch"].cpu().numpy()
+                            yaw = batch['lidar']["range_yaw"].cpu().numpy()
 
-                            lidar_sample_depth = postprocess_range(
-                                range_depth=lidar_sample_depth,
+                            range_sample_depth, range_sample_int = postprocess_range_depth_int(
+                                range_depth=log["range_sample_depth"],
                                 range_depth_orig=batch["lidar"]["range_depth_orig"],
+                                range_int=log["range_sample_int"],
+                                range_int_orig=batch["lidar"]["range_int_orig"],
                                 crop_left=batch["lidar"]["range_shift_left"],
-                                zero_context=True,
                             )
 
                             lidar_converter = LidarConverter()
                             for i in range(batch_size):
-                                pred_points, _ = lidar_converter.range2pcd(
-                                    lidar_sample_depth[i], 
-                                    batch['lidar']["range_pitch"][i].cpu().numpy(),
-                                    batch['lidar']["range_yaw"][i].cpu().numpy(),
+                                bbox_3d = batch["bbox_3d"][[i]].cpu().numpy()
+                                gt_instance_mask = batch["lidar"]["range_instance_mask_orig"][i].cpu().numpy()
+
+                                # create instance mask for predicted object
+                                pred_instance_mask = np.zeros(np.prod(gt_instance_mask.shape))
+                                label = np.arange(0, np.prod(gt_instance_mask.shape)).reshape(gt_instance_mask.shape)
+                                points, points_label = lidar_converter.range2pcd(range_sample_depth[i], pitch[i], yaw[i], label)
+
+                                object_points = points_in_bbox_corners(points, bbox_3d)
+                                object_pixels = points_label[object_points[:, 0]]
+                                pred_instance_mask[object_pixels] = 1
+                                pred_instance_mask = pred_instance_mask.reshape(gt_instance_mask.shape)
+
+                                # paste object
+                                instance_mask = np.logical_or(pred_instance_mask, gt_instance_mask)
+
+                                range_sample_depth = np.where(
+                                    instance_mask,
+                                    range_sample_depth[i],
+                                    batch["lidar"]["range_depth_orig"][i].cpu().numpy()
                                 )
+
+                                range_sample_int = np.where(
+                                    instance_mask,
+                                    range_sample_int[i],
+                                    batch["lidar"]["range_int_orig"][i].cpu().numpy()
+                                )
+
+                                # create edited point cloud
+                                points_coord, points_int = lidar_converter.range2pcd(range_sample_depth, pitch[i], yaw[i], range_sample_int)
+                                pred_points = np.concatenate([points_coord, points_int[:, None]], axis=1)
 
                                 os.makedirs(os.path.join(sample_path, segment_id_batch[i]), exist_ok=True)
                                 np.save(os.path.join(sample_path, segment_id_batch[i], f'object_pc_seed{opt.seed}.npy'), pred_points)

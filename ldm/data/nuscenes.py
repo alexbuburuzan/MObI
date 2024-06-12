@@ -279,6 +279,7 @@ class NuScenesDataset(data.Dataset):
 
         range_depth_orig = range_depth.copy()
         range_int_orig = range_int.copy()
+        range_instance_mask_orig = range_instance_mask.copy()
 
         # Preprocess range data
         range_depth, range_int, range_instance_mask, bbox_range_coords, range_shift_left = lidar_converter.apply_default_transforms(
@@ -329,6 +330,7 @@ class NuScenesDataset(data.Dataset):
             "range_data_inpaint": range_data_inpaint,
             "range_depth_orig": range_depth_orig,
             "range_int_orig": range_int_orig,
+            "range_instance_mask_orig": range_instance_mask_orig,
             "range_shift_left": range_shift_left,
             "range_mask": range_mask,
             "range_instance_mask": range_instance_mask,

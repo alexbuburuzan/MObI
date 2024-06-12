@@ -385,9 +385,9 @@ def get_lidar_vis(
     range_pitch = range_pitch.cpu().numpy()
     range_yaw = range_yaw.cpu().numpy()
 
-    sample = postprocess_range(sample, range_depth_orig, crop_left=range_shift_left, zero_context=True)
-    input = postprocess_range(input, range_depth_orig, crop_left=range_shift_left, zero_context=True)
-    rec = postprocess_range(rec, range_depth_orig, crop_left=range_shift_left, zero_context=True)
+    sample = postprocess_range_depth(sample, range_depth_orig, crop_left=range_shift_left, zero_context=True)
+    input = postprocess_range_depth(input, range_depth_orig, crop_left=range_shift_left, zero_context=True)
+    rec = postprocess_range_depth(rec, range_depth_orig, crop_left=range_shift_left, zero_context=True)
     lidar_converter = LidarConverter()
 
     for i in range(len(sample)):
@@ -412,7 +412,45 @@ def get_lidar_vis(
     return sample_vis, input_vis, rec_vis
 
 
-def postprocess_range(range_depth, range_depth_orig, crop_left, zero_context=False):
+def postprocess_range_depth_int(
+    range_depth,
+    range_depth_orig,
+    range_int,
+    range_int_orig,
+    crop_left,
+    zero_context=False
+):
+    range_depth = range_depth.cpu().numpy()
+    range_depth_orig = range_depth_orig.cpu().numpy()
+    range_int = range_int.cpu().numpy()
+    range_int_orig = range_int_orig.cpu().numpy()
+
+    if zero_context:
+        range_depth_orig = range_depth_orig * 0 - 1
+    
+    lidar_converter = LidarConverter()
+
+    range_depth_final_all, range_depth_int_all = [], []
+    for i in range(len(range_depth)):
+        range_depth_final, range_int_final = lidar_converter.undo_default_transforms(
+            crop_left=crop_left[i].item(),
+            range_depth_crop=range_depth[i, 0],
+            range_depth=range_depth_orig[i],
+            range_int_crop=range_int[i, 0],
+            range_int=range_int_orig[i],
+        )
+
+        range_depth_final_all.append(range_depth_final)
+        range_depth_int_all.append(range_int_final)
+
+    return np.stack(range_depth_final_all), np.stack(range_depth_int_all)
+
+def postprocess_range_depth(
+    range_depth,
+    range_depth_orig,
+    crop_left,
+    zero_context=False
+):
     range_depth = range_depth.cpu().numpy()
     range_depth_orig = range_depth_orig.cpu().numpy()
 
