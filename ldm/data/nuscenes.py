@@ -296,8 +296,10 @@ class NuScenesDataset(data.Dataset):
         bbox_range_coords = torch.tensor(bbox_range_coords).float()
         bbox_range_coords[..., 0] /= self.range_width
         bbox_range_coords[..., 1] /= self.range_height
-        min_depth_obj = bbox_range_coords[:, 2].min()
-        max_depth_obj = bbox_range_coords[:, 2].max()
+        min_depth_obj = bbox_range_coords[:, 2].min() - 0.1 * (bbox_range_coords[:, 2].max() - bbox_range_coords[:, 2].min())
+        max_depth_obj = bbox_range_coords[:, 2].max() + 0.1 * (bbox_range_coords[:, 2].max() - bbox_range_coords[:, 2].min())
+        min_depth_obj = torch.clamp(min_depth_obj, -1, 1)
+        max_depth_obj = torch.clamp(max_depth_obj, -1, 1)
 
         # Normalise range data
         range_depth = get_tensor(normalize=False, toTensor=True)(range_depth)
