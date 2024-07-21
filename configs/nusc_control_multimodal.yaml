@@ -1,23 +1,23 @@
-use_camera: False
+use_camera: True
 use_lidar: True
 
-image_height: 256
-image_width: 256
-latent_size: 32 # image_wifth // 8 
+image_height: 512
+image_width: 512
+latent_size: 64 # image_width // 8 
 object_area_crop: 0.2
 
-range_height: 256
-range_width: 256 # use feature map crop instead of range crop
+range_height: 512
+range_width: 512 # use feature map crop instead of range crop
 
-batch_size: 4
+batch_size: 2
 range_object_norm: True
 range_object_norm_scale: 0.75
 range_int_norm: True
-num_workers_per_gpu: 4
+num_workers_per_gpu: 8
 
 classes:
   - car
-  # - pedestrian
+  - pedestrian
   # - traffic_cone
   # - truck
   # - construction_vehicle
@@ -131,6 +131,7 @@ model:
           - 4
           num_res_blocks: 2
           attn_resolutions: []
+          lidar_adapter: False
           dropout: 0.0
         lossconfig:
           target: torch.nn.Identity
@@ -165,7 +166,6 @@ data:
               range_width: ${range_width}
               object_classes: ${classes}
               random_range_crop: False
-              min_lidar_points: 300
               range_object_norm: ${range_object_norm}
               range_object_norm_scale: ${range_object_norm_scale}
               range_int_norm: ${range_int_norm}
@@ -188,7 +188,6 @@ data:
               range_width: ${range_width}
               object_classes: ${classes}
               random_range_crop: False
-              min_lidar_points: 300
               range_object_norm: ${range_object_norm}
               range_object_norm_scale: ${range_object_norm_scale}
               range_int_norm: ${range_int_norm}
@@ -204,13 +203,14 @@ data:
               expand_ref_ratio: 0
               object_area_crop: ${object_area_crop}
               ref_aug: False
+              num_samples_per_class: 64
+              object_random_crop: False
               ref_mode: same-ref
               image_height: ${image_height}
               image_width: ${image_width}
               range_height: ${range_height}
               range_width: ${range_width}
               object_classes: ${classes}
-              min_lidar_points: 300
               range_object_norm: ${range_object_norm}
               range_object_norm_scale: ${range_object_norm_scale}
               range_int_norm: ${range_int_norm}
@@ -227,12 +227,12 @@ data:
               object_area_crop: ${object_area_crop}
               prob_use_3d_edit_mask: 1
               ref_aug: False
+              object_random_crop: False
               ref_mode: same-ref
               image_height: ${image_height}
               image_width: ${image_width}
               range_height: ${range_height}
               range_width: ${range_width}
-              min_lidar_points: 300
               rot_every_angle: 30
               range_object_norm: ${range_object_norm}
               range_object_norm_scale: ${range_object_norm_scale}
