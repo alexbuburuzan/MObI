@@ -1,96 +1,17 @@
-import cv2
 import mmcv
-import json
-import math
 import pandas as pd
 import numpy as np
 import pickle
-from mmcv import track_iter_progress
-from mmcv.ops import roi_align
 from os import path as osp
-from pycocotools import mask as maskUtils
-from pycocotools.coco import COCO
-import dataclasses
-import copy
+import multiprocessing
+from functools import partial
+from tqdm import tqdm
 
 from mmdet3d.core.utils import visualize_camera
 from mmdet3d.core.bbox import box_np_ops as box_np_ops
 from mmdet3d.datasets import build_dataset
-from mmdet.core.evaluation.bbox_overlaps import bbox_overlaps
 from mmdet3d.datasets.pipelines.utils import get_frustum, frustum_collision_test
 from tools.data_converter.lidar_converter import LidarConverter
-
-
-def _poly2mask(mask_ann, img_h, img_w):
-    if isinstance(mask_ann, list):
-        # polygon -- a single object might consist of multiple parts
-        # we merge all parts into one mask rle code
-        rles = maskUtils.frPyObjects(mask_ann, img_h, img_w)
-        rle = maskUtils.merge(rles)
-    elif isinstance(mask_ann["counts"], list):
-        # uncompressed RLE
-        rle = maskUtils.frPyObjects(mask_ann, img_h, img_w)
-    else:
-        # rle
-        rle = mask_ann
-    mask = maskUtils.decode(rle)
-    return mask
-
-
-def _parse_coco_ann_info(ann_info):
-    gt_bboxes = []
-    gt_labels = []
-    gt_bboxes_ignore = []
-    gt_masks_ann = []
-
-    for i, ann in enumerate(ann_info):
-        if ann.get("ignore", False):
-            continue
-        x1, y1, w, h = ann["bbox"]
-        if ann["area"] <= 0:
-            continue
-        bbox = [x1, y1, x1 + w, y1 + h]
-        if ann.get("iscrowd", False):
-            gt_bboxes_ignore.append(bbox)
-        else:
-            gt_bboxes.append(bbox)
-            gt_masks_ann.append(ann["segmentation"])
-
-    if gt_bboxes:
-        gt_bboxes = np.array(gt_bboxes, dtype=np.float32)
-        gt_labels = np.array(gt_labels, dtype=np.int64)
-    else:
-        gt_bboxes = np.zeros((0, 4), dtype=np.float32)
-        gt_labels = np.array([], dtype=np.int64)
-
-    if gt_bboxes_ignore:
-        gt_bboxes_ignore = np.array(gt_bboxes_ignore, dtype=np.float32)
-    else:
-        gt_bboxes_ignore = np.zeros((0, 4), dtype=np.float32)
-
-    ann = dict(bboxes=gt_bboxes, bboxes_ignore=gt_bboxes_ignore, masks=gt_masks_ann)
-
-    return ann
-
-
-def crop_image_patch_v2(pos_proposals, pos_assigned_gt_inds, gt_masks):
-    import torch
-    from torch.nn.modules.utils import _pair
-    device = pos_proposals.device
-    num_pos = pos_proposals.size(0)
-    fake_inds = (
-        torch.arange(num_pos,
-                     device=device).to(dtype=pos_proposals.dtype)[:, None])
-    rois = torch.cat([fake_inds, pos_proposals], dim=1)  # Nx5
-    mask_size = _pair(28)
-    rois = rois.to(device=device)
-    gt_masks_th = (
-        torch.from_numpy(gt_masks).to(device).index_select(
-            0, pos_assigned_gt_inds).to(dtype=rois.dtype))
-    # Use RoIAlign could apparently accelerate the training (~0.1s/iter)
-    targets = (
-        roi_align(gt_masks_th, rois, mask_size[::-1], 1.0, 0, True).squeeze(1))
-    return targets
 
 
 def crop_image_patch(pos_proposals, gt_masks, pos_assigned_gt_inds, org_img):
@@ -164,24 +85,172 @@ def area(bboxes_2d):
     return (bboxes_2d[:, 2] - bboxes_2d[:, 0]) * (bboxes_2d[:, 3] - bboxes_2d[:, 1])
 
 
+def process_sample(j, database_save_path):
+    global dataset
+    input_dict = dataset.get_data_info(j)
+    dataset.pre_pipeline(input_dict)
+    example = dataset.pipeline(input_dict)
+
+    print(example)
+    annos = example["ann_info"]
+    sample_idx = example["sample_idx"]
+    timestamp = example["timestamp"]
+    points = example["points"].tensor.numpy()
+    gt_boxes_3d = annos["gt_bboxes_3d"].tensor.numpy()
+    names = annos["gt_names"]
+    num_obj = gt_boxes_3d.shape[0]
+
+    if num_obj == 0:
+        return None, None
+    
+    lidar_converter = LidarConverter()
+
+    # lidar_path = osp.join(database_save_path, f"sample-{sample_idx}_lidar.npy")
+    scene_info = {
+        "sample_idx": sample_idx,
+        "timestamp": timestamp,
+        "location": example["location"],
+        "gt_bboxes_3d": example["ann_info"]["gt_bboxes_3d"].tensor.numpy(),
+        "gt_bboxes_3d_corners": example["ann_info"]["gt_bboxes_3d"].corners.numpy(),
+        "gt_labels": example["ann_info"]["gt_labels_3d"],
+        "range_depth_path": osp.join(database_save_path, f"sample-{sample_idx}_range_depth.npy"),
+        "range_intensity_path": osp.join(database_save_path, f"sample-{sample_idx}_range_intensity.npy"),
+        "range_pitch_path": osp.join(database_save_path, f"sample-{sample_idx}_range_pitch.npy"),
+        "range_yaw_path": osp.join(database_save_path, f"sample-{sample_idx}_range_yaw.npy"),
+        "range_instance_mask_path": osp.join(database_save_path, f"sample-{sample_idx}_range_instance_mask.npy"),
+        "lidar2image_transforms": example["lidar2image"],
+        "lidar2camera_transforms": example["lidar2camera"],
+        "camera_intrinsics": example["camera_intrinsics"],
+        "cam_types": example["cam_types"],
+        "image_paths": example["image_paths"],
+    }
+    range_depth, range_intensity, _, range_pitch, range_yaw = lidar_converter.pcd2range(points[:, :3].astype(np.float32), label=points[:, 3])
+
+    np.save(scene_info["range_depth_path"], range_depth)
+    np.save(scene_info["range_intensity_path"], range_intensity)
+    np.save(scene_info["range_pitch_path"], range_pitch)
+    np.save(scene_info["range_yaw_path"], range_yaw)
+    # np.save(lidar_path, points)
+
+    imgs = [np.array(img) for img in example["img"]]
+    lidar2image = example["lidar2image"]
+    cam_types = example["cam_types"]
+
+    bboxes_3d = annos["gt_bboxes_3d"].corners.numpy()
+    bboxes_3d = np.concatenate([bboxes_3d, np.ones_like(bboxes_3d[..., :1])], -1)
+
+    # Convert each PIL image to ndarray
+    imgs = [np.array(_img) for _img in imgs]
+    assert len(imgs) == len(lidar2image) and len(imgs) == len(cam_types)
+
+    # Create instance mask for each object
+    range_mask = np.zeros(np.prod(range_depth.shape)) - 1
+    label = np.arange(0, np.prod(range_depth.shape)).reshape(range_depth.shape)
+    points_new, points_label = lidar_converter.range2pcd(range_depth, range_pitch, range_yaw, label)
+
+    object_points = box_np_ops.points_in_bbox_corners(points_new, bboxes_3d[..., :3])
+    object_points_orig = box_np_ops.points_in_bbox_corners(points[:, :3], bboxes_3d[..., :3])
+    num_lidar_points = []
+
+    for _idx in range(len(bboxes_3d)):
+        object_pixels = points_label[object_points[:, _idx]]
+        range_mask[object_pixels] = _idx
+        num_lidar_points.append(object_points_orig[:, _idx].sum())
+
+    range_mask = range_mask.reshape(range_depth.shape)
+    np.save(scene_info["range_instance_mask_path"], range_mask)
+
+    db_object_infos = []
+
+    for _idx, (_img, _lidar2image, cam_type) in enumerate(zip(imgs, lidar2image, cam_types)):
+        # visualize_camera(
+        #     _img[..., ::-1],
+        #     fpath=f"test_img_{_idx}.png",
+        #     bboxes=annos["gt_bboxes_3d"],
+        #     labels=annos["gt_labels_3d"],
+        #     transform=_lidar2image,
+        #     classes=dataset.CLASSES,
+        #     save_figure=True,
+        # )
+
+        # Project 3D bboxes to 2D image space
+        coord_img = bboxes_3d @ _lidar2image.T
+        coord_img[..., :2] /= coord_img[..., 2, None]
+        depth = coord_img[..., 2]
+        org_indices = np.arange(coord_img.shape[0])
+        visible = (depth > 0).all(axis=-1)
+        depth = depth.mean(axis=-1)
+
+        if visible.sum() == 0:
+            continue
+
+        coord_img = coord_img[..., :2][visible]
+        org_indices = org_indices[visible]
+        depth = depth[visible]
+
+        # Extract 2D bboxes using extreme points
+        minxy = np.min(coord_img, axis=-2)
+        maxxy = np.max(coord_img, axis=-2)
+        bboxes_2d = np.concatenate([minxy, maxxy], axis=-1).astype(int)
+        bboxes_2d_org = bboxes_2d.copy()
+        bboxes_2d[:, 0::2] = np.clip(bboxes_2d[:, 0::2], a_min=0, a_max=_img.shape[1] - 1)
+        bboxes_2d[:, 1::2] = np.clip(bboxes_2d[:, 1::2], a_min=0, a_max=_img.shape[0] - 1)
+        visibility_percentage = area(bboxes_2d) / area(bboxes_2d_org)
+        visible = ((bboxes_2d[:, 2:] - bboxes_2d[:, :2]) > 4).all(axis=-1)
+
+        if visible.sum() == 0:
+            continue
+
+        bboxes_2d = bboxes_2d[visible]
+        org_indices = org_indices[visible]
+        depth = depth[visible]
+        visibility_percentage = visibility_percentage[visible]
+
+        # frustum IoU-based filtering
+        frustums = get_frustum(annos["gt_bboxes_3d"].tensor.numpy())[org_indices]
+        frustum_coll_mat = frustum_collision_test(frustums, apply_thresh=False)
+        diag = np.arange(frustums.shape[0])
+        frustum_coll_mat[diag, diag] = 0
+        max_iou_overlap = frustum_coll_mat.max(axis=-1)
+
+        object_img_patches = crop_image_patch_no_mask(bboxes_2d, _img)
+        object_3d_masks = create_3d_bbox_mask(
+            _img, annos["gt_bboxes_3d"][org_indices], annos["gt_labels_3d"][org_indices], _lidar2image
+        )
+
+        for i in range(len(object_img_patches)):
+            obj = org_indices[i]
+            track_id = annos["ann_tokens"][obj]
+
+            db_object_infos.append({
+                "track_id": track_id,
+                "scene_token": sample_idx,
+                "timestamp": timestamp,
+                "cam_type": cam_type,
+                "cam_idx": _idx,
+                "scene_obj_idx": obj,
+                "object_class": names[obj],
+                "camera_visibility_2d_box": visibility_percentage[i],
+                "num_mask_pixels": (object_3d_masks[i][..., 0] // 255).sum(),
+                "max_iou_overlap": max_iou_overlap[i],
+                "reference_image_h": object_img_patches[i].shape[0],
+                "reference_image_w": object_img_patches[i].shape[1],
+                "num_lidar_points": num_lidar_points[obj],
+            })
+
+    return scene_info, db_object_infos
+
+
 def create_groundtruth_database(
         dataset_class_name,
         data_path,
         info_prefix,
         info_path=None,
-        mask_anno_path=None,
-        used_classes=None,
         database_save_path=None,
         db_info_save_path=None,
         scene_info_save_path=None,
-        relative_path=True,
-        add_rgb=False,
-        lidar_only=False,
-        bev_only=False,
-        coors_range=None,
-        with_mask=False,
-        with_img=False,
-        split="train"
+        split="train",
+        workers=1,
     ):
     """Given the raw data, generate the ground truth database.
 
@@ -191,22 +260,12 @@ def create_groundtruth_database(
         info_prefix (str): Prefix of the info file.
         info_path (str): Path of the info file.
             Default: None.
-        mask_anno_path (str): Path of the mask_anno.
-            Default: None.
-        used_classes (list[str]): Classes have been used.
-            Default: None.
         database_save_path (str): Path to save database.
             Default: None.
         db_info_save_path (str): Path to save db_info.
             Default: None.
         scene_info_save path (str): Path to save all_scene_infos.
             Default: None.
-        relative_path (bool): Whether to use relative path.
-            Default: True.
-        with_mask (bool): Whether to use mask.
-            Default: False.
-        with_img (bool): Wheter to same image patches.
-            Default: False.
         split (str): Split of the dataset.
             Default: "train".
     """
@@ -231,7 +290,7 @@ def create_groundtruth_database(
                     use_dim=5),
                 dict(
                     type="LoadPointsFromMultiSweeps",
-                    sweeps_num=0,
+                    sweeps_num=0, # no aggregation
                     use_dim=[0, 1, 2, 3, 4],
                     pad_empty_sweeps=True,
                     remove_close=True),
@@ -246,8 +305,8 @@ def create_groundtruth_database(
     else:
         raise NotImplementedError
 
+    global dataset
     dataset = build_dataset(dataset_cfg)
-    lidar_converter = LidarConverter()
 
     if database_save_path is None:
         database_save_path = osp.join(data_path, f"{info_prefix}_pbe_gt_database_{split}")
@@ -260,152 +319,19 @@ def create_groundtruth_database(
     all_db_infos = []
     all_scene_infos = {}
 
-    for j in track_iter_progress(list(range(len(dataset)))):
-        input_dict = dataset.get_data_info(j)
-        dataset.pre_pipeline(input_dict)
-        example = dataset.pipeline(input_dict)
+    with multiprocessing.Pool(workers) as pool:
+        results = list(tqdm(
+            pool.imap(
+                partial(process_sample, database_save_path=database_save_path),
+                range(len(dataset))
+            ),
+            total=len(dataset)
+        ))
 
-        annos = example["ann_info"]
-        sample_idx = example["sample_idx"]
-        timestamp = example["timestamp"]
-        points = example["points"].tensor.numpy()
-        gt_boxes_3d = annos["gt_bboxes_3d"].tensor.numpy()
-        names = annos["gt_names"]
-        num_obj = gt_boxes_3d.shape[0]
-
-        if num_obj == 0:
-            continue
-
-        # lidar_path = osp.join(database_save_path, f"sample-{sample_idx}_lidar.npy")
-        all_scene_infos[sample_idx] = {
-            "sample_idx": sample_idx,
-            "timestamp": timestamp,
-            "location": example["location"],
-            "gt_bboxes_3d": example["ann_info"]["gt_bboxes_3d"].tensor.numpy(),
-            "gt_bboxes_3d_corners": example["ann_info"]["gt_bboxes_3d"].corners.numpy(),
-            "gt_labels": example["ann_info"]["gt_labels_3d"],
-            "range_depth_path": osp.join(database_save_path, f"sample-{sample_idx}_range_depth.npy"),
-            "range_intensity_path": osp.join(database_save_path, f"sample-{sample_idx}_range_intensity.npy"),
-            "range_pitch_path": osp.join(database_save_path, f"sample-{sample_idx}_range_pitch.npy"),
-            "range_yaw_path": osp.join(database_save_path, f"sample-{sample_idx}_range_yaw.npy"),
-            "range_instance_mask_path": osp.join(database_save_path, f"sample-{sample_idx}_range_instance_mask.npy"),
-            "lidar2image_transforms": example["lidar2image"],
-            "lidar2camera_transforms": example["lidar2camera"],
-            "camera_intrinsics": example["camera_intrinsics"],
-            "cam_types": example["cam_types"],
-            "image_paths": example["image_paths"],
-        }
-        range_depth, range_intensity, _, range_pitch, range_yaw = lidar_converter.pcd2range(points[:, :3].astype(np.float32), label=points[:, 3])
-
-        np.save(all_scene_infos[sample_idx]["range_depth_path"], range_depth)
-        np.save(all_scene_infos[sample_idx]["range_intensity_path"], range_intensity)
-        np.save(all_scene_infos[sample_idx]["range_pitch_path"], range_pitch)
-        np.save(all_scene_infos[sample_idx]["range_yaw_path"], range_yaw)
-        # np.save(lidar_path, points)
-
-        imgs = [np.array(img) for img in example["img"]]
-        lidar2image = example["lidar2image"]
-        cam_types = example["cam_types"]
-
-        bboxes_3d = annos["gt_bboxes_3d"].corners.numpy()
-        bboxes_3d = np.concatenate([bboxes_3d, np.ones_like(bboxes_3d[..., :1])], -1)
-
-        # Convert each PIL image to ndarray
-        imgs = [np.array(_img) for _img in imgs]
-        assert len(imgs) == len(lidar2image) and len(imgs) == len(cam_types)
-
-        # Create instance mask for each object
-        range_mask = np.zeros(np.prod(range_depth.shape)) - 1
-        label = np.arange(0, np.prod(range_depth.shape)).reshape(range_depth.shape)
-        points_new, points_label = lidar_converter.range2pcd(range_depth, range_pitch, range_yaw, label)
-
-        object_points = box_np_ops.points_in_bbox_corners(points_new, bboxes_3d[..., :3])
-        object_points_orig = box_np_ops.points_in_bbox_corners(points[:, :3], bboxes_3d[..., :3])
-        num_lidar_points = []
-
-        for _idx in range(len(bboxes_3d)):
-            object_pixels = points_label[object_points[:, _idx]]
-            range_mask[object_pixels] = _idx
-            num_lidar_points.append(object_points_orig[:, _idx].sum())
-
-        range_mask = range_mask.reshape(range_depth.shape)
-        np.save(all_scene_infos[sample_idx]["range_instance_mask_path"], range_mask)
-
-        for _idx, (_img, _lidar2image, cam_type) in enumerate(zip(imgs, lidar2image, cam_types)):
-            # visualize_camera(
-            #     _img[..., ::-1],
-            #     fpath=f"test_img_{_idx}.png",
-            #     bboxes=annos["gt_bboxes_3d"],
-            #     labels=annos["gt_labels_3d"],
-            #     transform=_lidar2image,
-            #     classes=dataset.CLASSES,
-            #     save_figure=True,
-            # )
-
-            # Project 3D bboxes to 2D image space
-            coord_img = bboxes_3d @ _lidar2image.T
-            coord_img[..., :2] /= coord_img[..., 2, None]
-            depth = coord_img[..., 2]
-            org_indices = np.arange(coord_img.shape[0])
-            visible = (depth > 0).all(axis=-1)
-            depth = depth.mean(axis=-1)
-
-            if visible.sum() == 0:
-                continue
-
-            coord_img = coord_img[..., :2][visible]
-            org_indices = org_indices[visible]
-            depth = depth[visible]
-
-            # Extract 2D bboxes using extreme points
-            minxy = np.min(coord_img, axis=-2)
-            maxxy = np.max(coord_img, axis=-2)
-            bboxes_2d = np.concatenate([minxy, maxxy], axis=-1).astype(int)
-            bboxes_2d_org = bboxes_2d.copy()
-            bboxes_2d[:, 0::2] = np.clip(bboxes_2d[:, 0::2], a_min=0, a_max=_img.shape[1] - 1)
-            bboxes_2d[:, 1::2] = np.clip(bboxes_2d[:, 1::2], a_min=0, a_max=_img.shape[0] - 1)
-            visibility_percentage = area(bboxes_2d) / area(bboxes_2d_org)
-            visible = ((bboxes_2d[:, 2:] - bboxes_2d[:, :2]) > 4).all(axis=-1)
-
-            if visible.sum() == 0:
-                continue
-
-            bboxes_2d = bboxes_2d[visible]
-            org_indices = org_indices[visible]
-            depth = depth[visible]
-            visibility_percentage = visibility_percentage[visible]
-
-            # frustum IoU-based filtering
-            frustums = get_frustum(annos["gt_bboxes_3d"].tensor.numpy())[org_indices]
-            frustum_coll_mat = frustum_collision_test(frustums, apply_thresh=False)
-            diag = np.arange(frustums.shape[0])
-            frustum_coll_mat[diag, diag] = 0
-            max_iou_overlap = frustum_coll_mat.max(axis=-1)
-
-            object_img_patches = crop_image_patch_no_mask(bboxes_2d, _img)
-            object_3d_masks = create_3d_bbox_mask(
-                _img, annos["gt_bboxes_3d"][org_indices], annos["gt_labels_3d"][org_indices], _lidar2image
-            )
-
-            for i in range(len(object_img_patches)):
-                obj = org_indices[i]
-                track_id = annos["ann_tokens"][obj]
-
-                all_db_infos.append({
-                    "track_id": track_id,
-                    "scene_token": sample_idx,
-                    "timestamp": timestamp,
-                    "cam_type": cam_type,
-                    "cam_idx": _idx,
-                    "scene_obj_idx": obj,
-                    "object_class": names[obj],
-                    "camera_visibility_2d_box": visibility_percentage[i],
-                    "num_mask_pixels": (object_3d_masks[i][..., 0] // 255).sum(),
-                    "max_iou_overlap": max_iou_overlap[i],
-                    "reference_image_h": object_img_patches[i].shape[0],
-                    "reference_image_w": object_img_patches[i].shape[1],
-                    "num_lidar_points": num_lidar_points[obj],
-                })
+    for scene_info, db_infos in results:
+        if scene_info is not None:
+            all_scene_infos[scene_info['sample_idx']] = scene_info
+            all_db_infos.extend(db_infos)
 
     all_db_infos_df = pd.DataFrame(all_db_infos)
 

@@ -37,6 +37,7 @@ def nuscenes_data_prep(root_path,
                        version,
                        dataset_name,
                        out_dir,
+                       workers,
                        max_sweeps=10):
     """Prepare data related to nuScenes dataset.
 
@@ -72,16 +73,16 @@ def nuscenes_data_prep(root_path,
         root_path,
         info_prefix,
         f'{out_dir}/{info_prefix}_infos_train.pkl',
-        with_img=True,
         split='train',
+        workers=workers,
     )
     create_groundtruth_database(
         dataset_name,
         root_path,
         info_prefix,
         f'{out_dir}/{info_prefix}_infos_val.pkl',
-        with_img=True,
         split='val',
+        workers=workers,
     )
 
 
@@ -240,6 +241,7 @@ if __name__ == '__main__':
             version=train_version,
             dataset_name='NuScenesDataset',
             out_dir=args.out_dir,
+            workers=args.workers,
             max_sweeps=args.max_sweeps)
         test_version = f'{args.version}-test'
         nuscenes_data_prep(
@@ -248,6 +250,7 @@ if __name__ == '__main__':
             version=test_version,
             dataset_name='NuScenesDataset',
             out_dir=args.out_dir,
+            workers=args.workers,
             max_sweeps=args.max_sweeps)
     elif args.dataset == 'nuscenes' and args.version == 'v1.0-mini':
         train_version = f'{args.version}'
@@ -257,6 +260,7 @@ if __name__ == '__main__':
             version=train_version,
             dataset_name='NuScenesDataset',
             out_dir=args.out_dir,
+            workers=args.workers,
             max_sweeps=args.max_sweeps)
     # elif args.dataset == 'lyft':
     #     train_version = f'{args.version}-train'
