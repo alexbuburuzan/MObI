@@ -1,6 +1,9 @@
+conda activate mobi
+
 python -u main.py \
---logdir models/Paint-by-Example \
+--logdir models/MObI \
 --pretrained_model checkpoints/model.ckpt \
---base configs/nusc_control.yaml \
+--base configs/nusc_control_multimodal.yaml \
 --scale_lr False \
---gpus "0,1,2,3,4,5,6,7" \
+--save_top_k 5 \
+--gpus "0,1" \

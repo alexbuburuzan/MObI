@@ -433,7 +433,8 @@ def main():
                                 image_pred = np.zeros_like(image)
                                 image_pred[top:top+crop_H, left:left+crop_W] = patch_pred
                                 image = (((image + 1.0) / 2.0) * 255).astype(np.uint8)
-                                image_recon = np.where(mask[..., None], image, image_pred)
+                                mask_convolved = cv2.GaussianBlur(mask, (15, 15), 7.0)
+                                image_recon = mask_convolved[..., None] * image + (1 - mask_convolved[..., None]) * image_pred
 
                                 mask_coords = np.nonzero(1 - mask)
                                 y1, y2 = mask_coords[0].min(), mask_coords[0].max()

@@ -5,6 +5,6 @@ python3 scripts/inference_test_bench.py \
     --ckpt "checkpoints/model.ckpt" \
     --scale "5" \
     --ddim_steps "50" \
-    --n_samples "1" \
+    --n_samples "8" \
     --save_samples \
     --save_visualisations \
