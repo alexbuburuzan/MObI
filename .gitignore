@@ -1,18 +1,24 @@
 # my stuff
-magicdrive-log
-magicdrive-log/*
 *.png
 *.jpg
 *.csv
 *.npy
-perception/cross_view_transformers/splits/*
+*.pth
+*.ckpt
+*.pkl
+
 tmp
 tmp/*
 .tmp/*
-cvt-outputs/*
 pretrained/*
 
-!perception/cross_view_transformers/splits/scene_gen.txt
+
+/test_bench
+/data
+/models
+/checkpoints
+coco2017_gmm_k20
+
 !.gitkeep
 
 
@@ -145,10 +151,3 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-
-
-/test_bench
-/data
-/models
-/checkpoints
-coco2017_gmm_k20

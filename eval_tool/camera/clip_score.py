@@ -4,7 +4,6 @@ import torch
 import os
 from tqdm import tqdm
 import clip
-from test_bench_dataset import COCOImageDataset
 from einops import rearrange
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 import torch.nn.functional as F
@@ -94,7 +93,7 @@ def main():
         args.path_ref, args.path_pred, args.batch_size, device, num_workers
     )
 
-    print('CLIP score: ', clip_value)
+    print('CLIP: ', clip_value)
 
 
 if __name__ == '__main__':

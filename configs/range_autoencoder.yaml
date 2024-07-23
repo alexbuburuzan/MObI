@@ -32,7 +32,7 @@ model:
   params:
     embed_dim: 4
     monitor: val/rec_loss
-    ckpt_path: "checkpoints/image_vae.ckpt"
+    ckpt_path: "checkpoints/autoencoder/image_vae.ckpt"
     image_key: "lidar"
     range_object_norm: ${range_object_norm}
     range_object_norm_scale: ${range_object_norm_scale}

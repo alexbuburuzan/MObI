@@ -9,7 +9,7 @@ The FID is calculated by assuming that X_1 and X_2 are the activations of
 the pool_3 layer of the inception net for generated samples and real world
 samples respectively.
 See --help to see further details.
-Code apapted from https://github.com/bioinf-jku/TTUR to use PyTorch instead
+Code adapted from https://github.com/bioinf-jku/TTUR to use PyTorch instead
 of Tensorflow
 Copyright 2018 Institute of Bioinformatics, JKU Linz
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,7 +32,7 @@ import torchvision.transforms as TF
 from PIL import Image
 from scipy import linalg
 from torch.nn.functional import adaptive_avg_pool2d
-import clip
+
 try:
     from tqdm import tqdm
 except ImportError:
@@ -40,41 +40,20 @@ except ImportError:
     def tqdm(x):
         return x
 
-from inception import InceptionV3
-
-parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
-parser.add_argument('--batch-size', type=int, default=64,
-                    help='Batch size to use')
-parser.add_argument('--num-workers', type=int,
-                    help=('Number of processes to use for data loading. '
-                          'Defaults to `min(8, num_cpus)`'))
-parser.add_argument('--device', type=str, default=None,
-                    help='Device to use. Like cuda, cuda:0 or cpu')
-parser.add_argument('--dims', type=int, default=2048,
-                    choices=list(InceptionV3.BLOCK_INDEX_BY_DIM),
-                    help=('Dimensionality of Inception features to use. '
-                          'By default, uses pool3 features'))
-parser.add_argument('path', type=str, nargs=2,
-                    help=('Paths to the generated images'))
-
-IMAGE_EXTENSIONS = {'bmp', 'jpg', 'jpeg', 'pgm', 'png', 'ppm',
-                    'tif', 'tiff', 'webp'}
-
-
 class ImagePathDataset(torch.utils.data.Dataset):
     def __init__(self, files, transforms=None):
         self.files = files
         self.transforms = transforms
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        _, self.preprocess = clip.load("ViT-B/32", device=device)
 
     def __len__(self):
         return len(self.files)
 
     def __getitem__(self, i):
         path = self.files[i]
-        image = self.preprocess(Image.open(path)).unsqueeze(0)
-        return image
+        img = Image.open(path).convert('RGB')
+        if self.transforms is not None:
+            img = self.transforms(img)
+        return img
 
 
 def get_activations(files, model, batch_size=50, dims=2048, device='cpu',
@@ -110,7 +89,7 @@ def get_activations(files, model, batch_size=50, dims=2048, device='cpu',
                                              drop_last=False,
                                              num_workers=num_workers)
 
-    pred_arr = np.empty((len(files), 512))
+    pred_arr = np.empty((len(files), dims))
 
     start_idx = 0
 
@@ -210,63 +189,3 @@ def calculate_activation_statistics(files, model, batch_size=50, dims=2048,
     mu = np.mean(act, axis=0)
     sigma = np.cov(act, rowvar=False)
     return mu, sigma
-
-
-def compute_statistics_of_path(path, model, batch_size, dims, device,
-                               num_workers=1):
-    if path.endswith('.npz'):
-        with np.load(path) as f:
-            m, s = f['mu'][:], f['sigma'][:]
-    else:
-        path = pathlib.Path(path)
-        files = sorted([file for ext in IMAGE_EXTENSIONS
-                       for file in path.glob('*.{}'.format(ext))])
-        m, s = calculate_activation_statistics(files, model, batch_size,
-                                               dims, device, num_workers)
-
-    return m, s
-
-
-def calculate_fid_given_paths(paths, batch_size, device, dims, num_workers=1):
-    """Calculates the FID of two paths"""
-    for p in paths:
-        if not os.path.exists(p):
-            raise RuntimeError('Invalid path: %s' % p)
-
-    block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[dims]
-
-    model = InceptionV3([block_idx]).to(device)
-
-    m1, s1 = compute_statistics_of_path(paths[0], model, batch_size,
-                                        dims, device, num_workers)
-    m2, s2 = compute_statistics_of_path(paths[1], model, batch_size,
-                                        dims, device, num_workers)
-    fid_value = calculate_frechet_distance(m1, s1, m2, s2)
-
-    return fid_value
-
-
-def main():
-    args = parser.parse_args()
-
-    if args.device is None:
-        device = torch.device('cuda' if (torch.cuda.is_available()) else 'cpu')
-    else:
-        device = torch.device(args.device)
-
-    if args.num_workers is None:
-        num_avail_cpus = len(os.sched_getaffinity(0))
-        num_workers = min(num_avail_cpus, 8)
-    else:
-        num_workers = args.num_workers
-
-    fid_value = calculate_fid_given_paths(args.path,
-                                          args.batch_size,
-                                          device,
-                                          args.dims,
-                                          num_workers)
-    print('FID: ', fid_value)
-
-
-if __name__ == '__main__':
-    main()
