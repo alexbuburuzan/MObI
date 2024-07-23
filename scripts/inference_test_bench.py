@@ -177,8 +177,14 @@ def main():
     parser.add_argument(
         "--n_samples",
         type=int,
-        default=5,
+        default=4,
         help="how many samples to produce for each given prompt. A.k.a. batch size",
+    )
+    parser.add_argument(
+        "--n_workers",
+        type=int,
+        default=4,
+        help="number of workers",
     )
     parser.add_argument(
         "--n_rows",
@@ -234,10 +240,6 @@ def main():
         help="insert object for rotated bbox",
     )
     parser.add_argument(
-        "--reference_test",
-        action="store_true",
-    )
-    parser.add_argument(
         "--save_samples",
         action="store_true",
     )
@@ -245,14 +247,20 @@ def main():
         "--save_visualisations",
         action="store_true",
     )
+    parser.add_argument(
+        'overrides',
+        nargs=argparse.REMAINDER,
+        help='Configuration overrides',
+    )
     opt = parser.parse_args()
-
     seed_everything(opt.seed)
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
     config = OmegaConf.load(f"{opt.config}")
+    cli_conf = OmegaConf.from_dotlist(opt.overrides)
+    config = OmegaConf.merge(config, cli_conf)
+    
     model = load_model_from_config(config, f"{opt.ckpt}")
-
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model = model.to(device)
 
     if opt.plms:
@@ -284,41 +292,6 @@ def main():
     if opt.rotation_test:
         test_data_config = config.data.params.rotation_test
         test_dataset = instantiate_from_config(test_data_config) 
-    elif opt.reference_test:
-        test_data_config = config.data.params.test
-        test_data_config['params']['num_sample_per_class'] = 1
-
-        test_data_config['params']['ref_aug'] = False
-        test_data_config['params']['ref_mode'] = "same-ref"
-        test_dataset = instantiate_from_config(test_data_config)
-
-        test_data_config['params']['ref_aug'] = True
-        test_data_config['params']['ref_mode'] = "same-ref"
-        test_dataset_aug = instantiate_from_config(test_data_config)
-        test_dataset_aug.objects_meta = test_dataset.objects_meta
-
-        test_data_config['params']['ref_aug'] = False
-        test_data_config['params']['ref_mode'] = "track-ref"
-        test_dataset_track = instantiate_from_config(test_data_config)
-        test_dataset_track.objects_meta = test_dataset.objects_meta
-
-        test_data_config['params']['ref_aug'] = False
-        test_data_config['params']['ref_mode'] = "random-ref"
-        test_dataset_random = instantiate_from_config(test_data_config)
-        test_dataset_random.objects_meta = test_dataset.objects_meta
-
-        test_data_config['params']['ref_aug'] = False
-        test_data_config['params']['ref_mode'] = "no-ref"
-        test_dataset_erase = instantiate_from_config(test_data_config)
-        test_dataset_erase.objects_meta = test_dataset.objects_meta
-
-        test_dataset = ConcatDataset([
-            test_dataset,
-            test_dataset_aug,
-            test_dataset_track,
-            test_dataset_random,
-            test_dataset_erase,
-        ])
     else:
         test_data_config = config.data.params.test
         test_data_config["params"]["return_original_image"] = opt.save_samples
@@ -328,7 +301,7 @@ def main():
     test_dataloader= torch.utils.data.DataLoader(
         test_dataset, 
         batch_size=batch_size, 
-        num_workers=multiprocessing.cpu_count(), 
+        num_workers=opt.n_workers, 
         pin_memory=True, 
         shuffle=False,
         #sampler=train_sampler, 
@@ -475,8 +448,6 @@ def main():
                                 cv2.imwrite(os.path.join(lidar_path, "range_intensity", segment_id_batch[i] + f'_grid_seed{opt.seed}.png'), range_int_vis)
 
                         if opt.save_samples:
-                            mask = log["range_bbox_mask"]
-                            # range_sample_depth = -mask + (1 - mask) * range_sample_depth
                             pitch = batch['lidar']["range_pitch"].cpu().numpy()
                             yaw = batch['lidar']["range_yaw"].cpu().numpy()
 
@@ -486,6 +457,7 @@ def main():
                                 range_int=log["range_sample_int"],
                                 range_int_orig=batch["lidar"]["range_int_orig"],
                                 crop_left=batch["lidar"]["range_shift_left"],
+                                width_crop=batch["lidar"]["width_crop"],
                             )
 
                             lidar_converter = LidarConverter()

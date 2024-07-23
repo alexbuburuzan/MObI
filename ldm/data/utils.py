@@ -5,6 +5,22 @@ import torch
 
 from ldm.data.lidar_converter import LidarConverter
 from torchvision.transforms import Resize
+import torch.nn.functional as F
+
+
+def resize(x, size, mode="avg_pool"):
+    if mode == "avg_pool":
+        _, _, height, width = x.shape
+        x = F.avg_pool2d(x, kernel_size=(height // size[0], width // size[1]))
+    elif mode == "max_pool":
+        _, _, height, width = x.shape
+        x = F.max_pool2d(x, kernel_size=(height // size[0], width // size[1]))
+    elif mode == "nearest":
+        x = F.interpolate(x, size=size, mode="nearest")
+    else:
+        x = F.interpolate(x, size=size, mode='bilinear', align_corners=False)
+    return x
+
 
 def get_image_coords(bbox_corners, lidar2image, include_depth=False):
     """
@@ -142,7 +158,7 @@ def get_range_inpaint_mask(bbox_corners, range_height, range_width, expand_ratio
 
     lidar_converter = LidarConverter()
     coords = lidar_converter.get_range_coords(bbox_corners)
-    _, _, _, coords, _ = lidar_converter.apply_default_transforms(
+    _, _, _, coords, _, _ = lidar_converter.apply_default_transforms(
         coords, height=range_height, width=range_width, crop_left=crop_left
     )
     coords = coords[:, :2]
@@ -371,6 +387,7 @@ def get_camera_vis(
 
 
 def get_lidar_vis(
+    *,
     sample,
     input,
     rec,
@@ -379,15 +396,34 @@ def get_lidar_vis(
     range_shift_left,
     range_pitch,
     range_yaw,
+    width_crop,
 ):
     sample_vis, input_vis, rec_vis = [], [], []
     bboxes = bboxes.cpu().numpy()
     range_pitch = range_pitch.cpu().numpy()
     range_yaw = range_yaw.cpu().numpy()
 
-    sample = postprocess_range_depth(sample, range_depth_orig, crop_left=range_shift_left, zero_context=True)
-    input = postprocess_range_depth(input, range_depth_orig, crop_left=range_shift_left, zero_context=True)
-    rec = postprocess_range_depth(rec, range_depth_orig, crop_left=range_shift_left, zero_context=True)
+    sample = postprocess_range_depth(
+        range_depth=sample,
+        range_depth_orig=range_depth_orig,
+        crop_left=range_shift_left,
+        width_crop=width_crop,
+        zero_context=True
+    )
+    input = postprocess_range_depth(
+        range_depth=input,
+        range_depth_orig=range_depth_orig,
+        crop_left=range_shift_left,
+        width_crop=width_crop,
+        zero_context=True
+    )
+    rec = postprocess_range_depth(
+        range_depth=rec,
+        range_depth_orig=range_depth_orig,
+        crop_left=range_shift_left,
+        width_crop=width_crop,
+        zero_context=True
+    )
     lidar_converter = LidarConverter()
 
     for i in range(len(sample)):
@@ -413,11 +449,13 @@ def get_lidar_vis(
 
 
 def postprocess_range_depth_int(
+    *,
     range_depth,
     range_depth_orig,
     range_int,
     range_int_orig,
     crop_left,
+    width_crop,
     zero_context=False
 ):
     range_depth = range_depth.cpu().numpy()
@@ -434,6 +472,7 @@ def postprocess_range_depth_int(
     for i in range(len(range_depth)):
         range_depth_final, range_int_final = lidar_converter.undo_default_transforms(
             crop_left=crop_left[i].item(),
+            width_crop=width_crop[i].item(),
             range_depth_crop=range_depth[i, 0],
             range_depth=range_depth_orig[i],
             range_int_crop=range_int[i, 0],
@@ -446,9 +485,11 @@ def postprocess_range_depth_int(
     return np.stack(range_depth_final_all), np.stack(range_depth_int_all)
 
 def postprocess_range_depth(
+    *,
     range_depth,
     range_depth_orig,
     crop_left,
+    width_crop,
     zero_context=False
 ):
     range_depth = range_depth.cpu().numpy()
@@ -464,6 +505,7 @@ def postprocess_range_depth(
         range_depth_final.append(
             lidar_converter.undo_default_transforms(
                 crop_left=crop_left[i].item(),
+                width_crop=width_crop[i].item(),
                 range_depth_crop=range_depth[i, 0],
                 range_depth=range_depth_orig[i],
             )[0]

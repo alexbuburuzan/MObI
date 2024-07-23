@@ -294,7 +294,7 @@ class LidarConverter:
         range_depth=None,
         range_int=None,
         mask=None,
-        width=1096,
+        width=512,
         random_crop=False,
         crop_left=None,
     ):
@@ -354,8 +354,8 @@ class LidarConverter:
         range_depth=None,
         range_int=None,
         mask=None,
-        height=32,
-        width=1096,
+        height=512,
+        width=512,
         crop_left=None,
         random_crop=False,
     ):
@@ -376,22 +376,28 @@ class LidarConverter:
             range_int: np.array, shape (height, width)
             bbox_range_coords: np.array, shape (8, 3)
         """
-        range_depth, range_int, mask, bbox_range_coords = self.resize(
-            range_depth, range_int, mask, bbox_range_coords, new_H=height
-        )
         range_depth, range_int, mask, bbox_range_coords = self.tile(
             range_depth, range_int, mask, bbox_range_coords, n=3
         )
+
+        object_width = bbox_range_coords[:, 0].max() - bbox_range_coords[:, 0].min()
+        width_crop = max(64, min(width, int(2 ** np.ceil(np.log2(object_width * 1.5)))))
+
         range_depth, range_int, mask, bbox_range_coords, crop_left = self.bbox_crop(
             bbox_range_coords, range_depth, range_int, mask,
-            width=width, crop_left=crop_left, random_crop=random_crop
+            width=width_crop, crop_left=crop_left, random_crop=random_crop
         )
 
-        return range_depth, range_int, mask, bbox_range_coords, crop_left
+        range_depth, range_int, mask, bbox_range_coords = self.resize(
+            range_depth, range_int, mask, bbox_range_coords, new_W=width, new_H=height
+        )
+
+        return range_depth, range_int, mask, bbox_range_coords, crop_left, width_crop
     
     def undo_default_transforms(
         self,
         crop_left,
+        width_crop,
         range_depth_crop,
         range_depth,
         range_int_crop=None,
@@ -404,7 +410,6 @@ class LidarConverter:
         range_depth_crop, range_int_crop = self._copy_arrays(range_depth_crop, range_int_crop)
 
         ignore = -1000
-        width_crop = range_depth_crop.shape[-1]
         crop_left = crop_left % range_depth.shape[-1]
 
         if mask is not None:

@@ -25,7 +25,7 @@ from ldm.models.autoencoder import IdentityFirstStage, AutoencoderKL
 from ldm.models.lidar_diffusion import VQModelInterface
 from ldm.modules.diffusionmodules.util import make_beta_schedule, extract_into_tensor, noise_like
 from ldm.models.diffusion.ddim import DDIMSampler
-from ldm.data.utils import get_camera_vis, get_lidar_vis, inverse_depth_normalization
+from ldm.data.utils import get_camera_vis, get_lidar_vis, inverse_depth_normalization, resize
 from torchvision.transforms import Resize
 
 import random
@@ -1494,31 +1494,20 @@ class LatentDiffusion(DDPM):
         if self.use_lidar:
             lidar_sample = self.decode_first_stage(h_lidar, module_name="lidar_stage_model")
             lidar_sample = torch.clamp(lidar_sample, -1., 1.)
-
-            def resize(x, size):
-                # return F.interpolate(x, size=size, mode='nearest')
-                x = x.permute([0, 2, 3, 1])
-                kernel_size = x.shape[1] // size[0]
-                x = x.unfold(1, kernel_size, kernel_size)
-                x = x.reshape(*x.shape[:3], -1)
-                x = x.median(dim=-1).values
-                x = x.unsqueeze(1)
-                return x
-
             new_size = (32, lidar_sample.shape[-1])
             
-            inpaint_depth = resize(batch["lidar"]["range_data_inpaint"][:, [0, 1]], size=new_size)
-            sample_depth = resize(lidar_sample[:, [0, 1]], size=new_size)
-            input_depth = resize(batch["lidar"]["range_data"][:, [0, 1]], size=new_size)
-            rec_depth = resize(data["lidar_rec"][:, [0, 1]], size=new_size)
+            inpaint_depth = resize(batch["lidar"]["range_data_inpaint"][:, [0]], size=new_size)
+            sample_depth = resize(lidar_sample[:, [0]], size=new_size)
+            input_depth = resize(batch["lidar"]["range_data"][:, [0]], size=new_size)
+            rec_depth = resize(data["lidar_rec"][:, [0]], size=new_size)
 
-            inpaint_int = resize(batch["lidar"]["range_data_inpaint"][:, [2]], size=new_size)
-            sample_int = resize(lidar_sample[:, [2]], size=new_size)
-            input_int = resize(batch["lidar"]["range_data"][:, [2]], size=new_size)
-            rec_int = resize(data["lidar_rec"][:, [2]], size=new_size)
+            inpaint_int = resize(batch["lidar"]["range_data_inpaint"][:, [1]], size=new_size)
+            sample_int = resize(lidar_sample[:, [1]], size=new_size)
+            input_int = resize(batch["lidar"]["range_data"][:, [1]], size=new_size)
+            rec_int = resize(data["lidar_rec"][:, [1]], size=new_size)
 
-            mask = resize(batch["lidar"]["range_mask"][:, [0]], size=new_size)
-            instance_mask = resize(batch["lidar"]["range_instance_mask"], size=new_size)
+            mask = resize(1 - batch["lidar"]["range_mask"][:, [0]], size=new_size, mode="max_pool")
+            instance_mask = resize(batch["lidar"]["range_instance_mask"], size=new_size, mode="max_pool")
 
             log["range_depth_pred"] = torch.cat([input_depth, inpaint_depth, instance_mask, sample_depth, rec_depth], dim=-2)
             log["range_int_pred"] = torch.cat([input_int, inpaint_int, instance_mask, sample_int, rec_int], dim=-2)
@@ -1558,9 +1547,15 @@ class LatentDiffusion(DDPM):
                     B = pred.shape[0]
                     object_scores, mask_scores, full_scores = [], [], []
                     for i in range(B):
-                        object_dist = self.range_l1_metric(pred[i][instance_mask[i] == 1], gt[i][instance_mask[i] == 1]).flatten()
-                        mask_dist = self.range_l1_metric(pred[i][mask[i] == 0], gt[i][mask[i] == 0]).flatten()
-                        full_dist = self.range_l1_metric(pred[i], gt[i]).flatten()
+                        new_size = (32, batch["lidar"]["width_crop"][i].item())
+                        pred_ = resize(pred[[i]], new_size)
+                        instance_mask_ = resize(instance_mask[[i]], new_size, mode='max_pool')
+                        mask_ = resize(mask[[i]], new_size, mode="max_pool")
+                        gt_ = resize(gt[[i]], new_size)
+
+                        object_dist = self.range_l1_metric(pred_[instance_mask_ == 1], gt_[instance_mask_ == 1]).flatten()
+                        mask_dist = self.range_l1_metric(pred_[mask_ == 1], gt_[mask_ == 1]).flatten()
+                        full_dist = self.range_l1_metric(pred_, gt_).flatten()
 
                         if reduction == "mean":
                             object_scores.append(object_dist.mean().item())
@@ -1577,7 +1572,7 @@ class LatentDiffusion(DDPM):
                     lidar_metrics.update({
                         f"{reduction}/object_{pred_name}_L1" : np.mean(object_scores),
                         f"{reduction}/mask_{pred_name}_L1" : np.mean(mask_scores),
-                        f"{reduction}/full_{pred_name}_L1" : np.mean(full_scores),
+                        # f"{reduction}/full_{pred_name}_L1" : np.mean(full_scores),
                     })
 
             # Make metrics more interpretable by scaling them to the original range
@@ -1595,6 +1590,7 @@ class LatentDiffusion(DDPM):
                 range_shift_left=batch["lidar"]["range_shift_left"],
                 range_pitch=batch["lidar"]["range_pitch"],
                 range_yaw=batch["lidar"]["range_yaw"],
+                width_crop=batch["lidar"]["width_crop"],
             )
 
             log["lidar_input-pred-rec"] = torch.cat([input_vis, sample_vis, rec_vis], dim=-2)
@@ -1610,9 +1606,7 @@ class LatentDiffusion(DDPM):
             if (
                 "cond_adapter" in name or
                 "lidar" in name or 
-                "cross_modal" in name or
-                name[:4] == "out." or # image out projection
-                "input_blocks.0.0" in name # image in projection
+                "cross_modal" in name
             ):
                 params.append(param)
                 param_names.append(name)

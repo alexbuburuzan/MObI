@@ -68,6 +68,7 @@ class NuScenesDataset(data.Dataset):
         frustum_iou_max=0.5,
         camera_visibility_min=0.7,
         object_area_crop=0.1,
+        object_random_crop=True,
         min_lidar_points=100,
         rot_every_angle=0,
         rot_test_scene=None, # used for rotation test
@@ -91,6 +92,7 @@ class NuScenesDataset(data.Dataset):
         self.use_camera = use_camera
         self.random_range_crop = random_range_crop
         self.object_area_crop = object_area_crop
+        self.object_random_crop = object_random_crop
         self.return_original_image = return_original_image
         self.range_object_norm = range_object_norm
         self.range_object_norm_scale = range_object_norm_scale
@@ -102,24 +104,26 @@ class NuScenesDataset(data.Dataset):
         self.range_height = range_height
         self.range_width = range_width
 
-        self.objects_meta = pd.read_csv(object_database_path, index_col=0)
+        self.objects_meta_all = pd.read_csv(object_database_path, index_col=0)
         # Filter out small, occluded objects
-        self.objects_meta = self.objects_meta[
-            (self.objects_meta["reference_image_h"] >= reference_image_min_h) &
-            (self.objects_meta["reference_image_h"] <= reference_image_max_h) &
-            (self.objects_meta["reference_image_w"] >= reference_image_min_w) &
-            (self.objects_meta["reference_image_w"] <= reference_image_max_w) &
-            (self.objects_meta["max_iou_overlap"] <= frustum_iou_max) &
-            (self.objects_meta["object_class"].isin(object_classes)) &
-            (self.objects_meta["camera_visibility_mask"] >= camera_visibility_min) &
-            (self.objects_meta["num_lidar_points"] >= min_lidar_points)
+        self.objects_meta_all = self.objects_meta_all[
+            (self.objects_meta_all["reference_image_h"] >= reference_image_min_h) &
+            (self.objects_meta_all["reference_image_h"] <= reference_image_max_h) &
+            (self.objects_meta_all["reference_image_w"] >= reference_image_min_w) &
+            (self.objects_meta_all["reference_image_w"] <= reference_image_max_w) &
+            (self.objects_meta_all["max_iou_overlap"] <= frustum_iou_max) &
+            (self.objects_meta_all["object_class"].isin(object_classes)) &
+            (self.objects_meta_all["camera_visibility_mask"] >= camera_visibility_min) &
+            (self.objects_meta_all["num_lidar_points"] >= min_lidar_points)
         ]
 
         # Select an object from each class when testing
         if num_samples_per_class is not None:
-            self.objects_meta = self.objects_meta.groupby("object_class").apply(
+            self.objects_meta = self.objects_meta_all.groupby("object_class").apply(
                 lambda x: x.sample(num_samples_per_class)
             ).reset_index(drop=True)
+        else:
+            self.objects_meta = self.objects_meta_all
 
         if rot_every_angle != 0:
             angles = np.arange(0, 360, rot_every_angle)
@@ -201,12 +205,12 @@ class NuScenesDataset(data.Dataset):
         elif self.ref_mode == "same-ref":
             reference_meta = current_object_meta
         elif self.ref_mode == "random-ref":
-            reference_meta = self.objects_meta[
-                self.objects_meta["object_class"] == current_object_meta["object_class"]
+            reference_meta = self.objects_meta_all[
+                self.objects_meta_all["object_class"] == current_object_meta["object_class"]
             ].sample(1).iloc[0]
         elif self.ref_mode == "track-ref":
-            reference_meta = self.objects_meta[
-                self.objects_meta["track_id"] == current_object_meta["track_id"]
+            reference_meta = self.objects_meta_all[
+                self.objects_meta_all["track_id"] == current_object_meta["track_id"]
             ].sample(1).iloc[0]
         else:
             raise ValueError("Invalid ref_mode")
@@ -282,7 +286,7 @@ class NuScenesDataset(data.Dataset):
         range_instance_mask_orig = range_instance_mask.copy()
 
         # Preprocess range data
-        range_depth, range_int, range_instance_mask, bbox_range_coords, range_shift_left = lidar_converter.apply_default_transforms(
+        range_depth, range_int, range_instance_mask, bbox_range_coords, range_shift_left, width_crop = lidar_converter.apply_default_transforms(
             range_depth=range_depth,
             range_int=range_int,
             mask=range_instance_mask,
@@ -334,6 +338,7 @@ class NuScenesDataset(data.Dataset):
             "range_int_orig": range_int_orig,
             "range_instance_mask_orig": range_instance_mask_orig,
             "range_shift_left": range_shift_left,
+            "width_crop": width_crop,
             "range_mask": range_mask,
             "range_instance_mask": range_instance_mask,
             "range_pitch": range_pitch,
@@ -389,8 +394,12 @@ class NuScenesDataset(data.Dataset):
         crop_H = min(crop_H, H)
         crop_W = min(crop_W, W)
 
-        left = random.randint(max(0, x2 - crop_W), min(x1, W - crop_W))
-        top = random.randint(max(0, y2 - crop_H), min(y1, H - crop_H))
+        if self.object_random_crop:
+            left = random.randint(max(0, x2 - crop_W), min(x1, W - crop_W))
+            top = random.randint(max(0, y2 - crop_H), min(y1, H - crop_H))
+        else:
+            left = torch.div(max(0, x2 - crop_W) + min(x1, W - crop_W), 2, rounding_mode='floor')
+            top = torch.div(max(0, y2 - crop_H) + min(y1, H - crop_H), 2, rounding_mode='floor')
 
         image = image[:, top:top+crop_H, left:left+crop_W]
         image_mask = image_mask[top:top+crop_H, left:left+crop_W]
