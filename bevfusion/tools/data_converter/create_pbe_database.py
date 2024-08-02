@@ -5,13 +5,15 @@ import pickle
 from os import path as osp
 import multiprocessing
 from functools import partial
-from tqdm import tqdm
+from tqdm import tqdm, trange
+import copy
+import random
 
 from mmdet3d.core.utils import visualize_camera
 from mmdet3d.core.bbox import box_np_ops as box_np_ops
 from mmdet3d.datasets import build_dataset
-from mmdet3d.datasets.pipelines.utils import get_frustum, frustum_collision_test
-from tools.data_converter.lidar_converter import LidarConverter
+from mmdet3d.datasets.pipelines.utils import get_frustum, frustum_collision_test, box_collision_test
+from ldm.data.lidar_converter import LidarConverter
 
 
 def crop_image_patch(pos_proposals, gt_masks, pos_assigned_gt_inds, org_img):
@@ -91,7 +93,6 @@ def process_sample(j, database_save_path):
     dataset.pre_pipeline(input_dict)
     example = dataset.pipeline(input_dict)
 
-    print(example)
     annos = example["ann_info"]
     sample_idx = example["sample_idx"]
     timestamp = example["timestamp"]
@@ -99,6 +100,10 @@ def process_sample(j, database_save_path):
     gt_boxes_3d = annos["gt_bboxes_3d"].tensor.numpy()
     names = annos["gt_names"]
     num_obj = gt_boxes_3d.shape[0]
+
+    city = example["location"].split("-")[0]
+    is_raining = ("rain" in example["description"].lower())
+    is_night = ("night" in example["description"].lower())
 
     if num_obj == 0:
         return None, None
@@ -110,9 +115,9 @@ def process_sample(j, database_save_path):
         "sample_idx": sample_idx,
         "timestamp": timestamp,
         "location": example["location"],
+        "description": example["description"],
         "gt_bboxes_3d": example["ann_info"]["gt_bboxes_3d"].tensor.numpy(),
         "gt_bboxes_3d_corners": example["ann_info"]["gt_bboxes_3d"].corners.numpy(),
-        "gt_labels": example["ann_info"]["gt_labels_3d"],
         "range_depth_path": osp.join(database_save_path, f"sample-{sample_idx}_range_depth.npy"),
         "range_intensity_path": osp.join(database_save_path, f"sample-{sample_idx}_range_intensity.npy"),
         "range_pitch_path": osp.join(database_save_path, f"sample-{sample_idx}_range_pitch.npy"),
@@ -236,9 +241,30 @@ def process_sample(j, database_save_path):
                 "reference_image_h": object_img_patches[i].shape[0],
                 "reference_image_w": object_img_patches[i].shape[1],
                 "num_lidar_points": num_lidar_points[obj],
+                "city": city,
+                "is_raining": is_raining,
+                "is_night": is_night,
+                "is_erase_box": False
             })
 
     return scene_info, db_object_infos
+
+
+def check_erase_bbox(gt_bboxes_3d):
+    gt_frustums = get_frustum(gt_bboxes_3d)
+    gt_bboxes_bev = box_np_ops.center_to_corner_box2d(
+        gt_bboxes_3d[:, 0:2], gt_bboxes_3d[:, 3:5], gt_bboxes_3d[:, 6]
+    )
+
+    # Last box is the erase box
+    box_coll_mat = box_collision_test(gt_bboxes_bev, gt_bboxes_bev)
+    frustum_coll_mat = frustum_collision_test(gt_frustums[:-1], gt_frustums[[-1]])
+
+    coll_mat = np.logical_or(box_coll_mat, frustum_coll_mat)
+    diag = np.arange(gt_bboxes_3d.shape[0])
+    coll_mat[diag, diag] = False
+
+    return not coll_mat[-1].any()
 
 
 def create_groundtruth_database(
@@ -251,6 +277,7 @@ def create_groundtruth_database(
         scene_info_save_path=None,
         split="train",
         workers=1,
+        max_sweeps=0
     ):
     """Given the raw data, generate the ground truth database.
 
@@ -268,6 +295,8 @@ def create_groundtruth_database(
             Default: None.
         split (str): Split of the dataset.
             Default: "train".
+        max_sweeps (int): Number of additional LiDAR sweeps.
+            Default: 0
     """
     print(f"Create GT Database of {dataset_class_name} {split} set")
     dataset_cfg = dict(
@@ -290,7 +319,7 @@ def create_groundtruth_database(
                     use_dim=5),
                 dict(
                     type="LoadPointsFromMultiSweeps",
-                    sweeps_num=0, # no aggregation
+                    sweeps_num=max_sweeps, # no aggregation
                     use_dim=[0, 1, 2, 3, 4],
                     pad_empty_sweeps=True,
                     remove_close=True),
@@ -327,12 +356,52 @@ def create_groundtruth_database(
             ),
             total=len(dataset)
         ))
+    # results = [process_sample(0, database_save_path=database_save_path)]
 
     for scene_info, db_infos in results:
         if scene_info is not None:
             all_scene_infos[scene_info['sample_idx']] = scene_info
             all_db_infos.extend(db_infos)
 
+    # Create data for supervising object removal
+    num_scenes = 10000 if split == "train" else 2000
+    erase_boxes = []
+    while len(erase_boxes) < num_scenes:
+        object_idx = np.random.randint(0, len(all_db_infos))
+        scene_idx = np.random.choice(list(all_scene_infos.keys()))
+
+        object_info = all_db_infos[object_idx]
+        source_scene = all_scene_infos[object_info["scene_token"]]
+        scene_obj_idx = object_info["scene_obj_idx"]
+
+        # Last box is the erase box
+        all_gt_bboxes_3d = np.concatenate([
+            all_scene_infos[scene_idx]["gt_bboxes_3d"],
+            source_scene["gt_bboxes_3d"][[scene_obj_idx]]
+        ])
+
+        all_gt_bboxes_3d_corners = np.concatenate([
+            all_scene_infos[scene_idx]["gt_bboxes_3d_corners"],
+            source_scene["gt_bboxes_3d_corners"][[scene_obj_idx]]
+        ])
+
+        if check_erase_bbox(all_gt_bboxes_3d):
+            # Add box to target scene
+            all_scene_infos[scene_idx]["gt_bboxes_3d"] = all_gt_bboxes_3d
+            all_scene_infos[scene_idx]["gt_bboxes_3d_corners"] = all_gt_bboxes_3d_corners
+
+            erase_box = copy.deepcopy(object_info)
+
+            # Copy selected box to target scene and mark it as empty
+            erase_box["scene_token"] = all_scene_infos[scene_idx]["sample_idx"]
+            erase_box["is_erase_box"] = True
+            erase_box["scene_obj_idx"] = all_scene_infos[scene_idx]["gt_bboxes_3d"].shape[0] - 1
+            erase_boxes.append(erase_box)
+
+            if len(erase_boxes) % 200 == 0:
+                print("Num erase boxes", len(erase_boxes))
+
+    all_db_infos.extend(erase_boxes)
     all_db_infos_df = pd.DataFrame(all_db_infos)
 
     # Calculate the visibility percentage of each object

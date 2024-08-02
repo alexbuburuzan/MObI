@@ -216,6 +216,7 @@ class NuScenesDataset(Custom3DDataset):
             sweeps=info["sweeps"],
             timestamp=info["timestamp"],
             location=info["location"],
+            description=info["description"],
         )
 
         # ego to global transform

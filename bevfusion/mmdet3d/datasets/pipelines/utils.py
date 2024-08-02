@@ -49,6 +49,10 @@ def box_collision_test(boxes, qboxes, clockwise=True):
     qboxes_standup = box_np_ops.corner_to_standup_nd_jit(qboxes)
     for i in range(N):
         for j in range(K):
+            if (boxes_standup[i, 0] == boxes_standup[j, 0]).all():
+                # Overlap of identical boxes
+                ret[i, j] = ret[j, i] = True
+                continue
             # calculate standup first
             iw = min(boxes_standup[i, 2], qboxes_standup[j, 2]) - max(
                 boxes_standup[i, 0], qboxes_standup[j, 0]
