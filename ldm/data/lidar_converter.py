@@ -1,6 +1,22 @@
 import cv2
 import random
 import numpy as np
+import torch
+import torch.nn.functional as F
+
+
+def pool_resize(x, size, mode="avg_pool"):
+    x = x.float()
+    if mode == "avg_pool":
+        _, _, height, width = x.shape
+        x = F.avg_pool2d(x, kernel_size=(height // size[0], width // size[1]))
+    elif mode == "max_pool":
+        _, _, height, width = x.shape
+        x = F.max_pool2d(x, kernel_size=(height // size[0], width // size[1]))
+    else:
+        raise NotImplementedError
+
+    return x
 
 
 class LidarConverter:
@@ -12,8 +28,8 @@ class LidarConverter:
         log_scale = False,
         depth_scale = 5.8,
     ) -> None:
-        self.H = H
-        self.W = W
+        self.current_H = H
+        self.current_W = W
         self.depth_interval = depth_interval
         self.base_size = (H, W)
         self.log_scale = log_scale
@@ -58,7 +74,7 @@ class LidarConverter:
         proj_y = 31 - np.round(np.clip(proj_y, 0, 31)).astype(np.int32)
 
         # get projections in range coords
-        proj_x = 0.5 * (yaw / np.pi + 1.0) * self.W
+        proj_x = 0.5 * (yaw / np.pi + 1.0) * self.current_W
         proj_x = np.maximum(0, np.minimum(self.base_size[1] - 1, np.floor(proj_x))).astype(np.int32)
 
         # order in decreasing depth
@@ -189,7 +205,7 @@ class LidarConverter:
         proj_y = 31 - np.round(np.clip(proj_y, 0, 31)).astype(np.int32)
 
         # scale to image size using angular resolution
-        proj_x *= self.W
+        proj_x *= self.current_W
 
         if self.log_scale:
             depth = np.log2(depth + 0.0001 + 1)
@@ -234,22 +250,34 @@ class LidarConverter:
         )
 
         if range_depth is not None and range_depth.shape != (new_H, new_W):
-            range_depth = cv2.resize(
-                range_depth, (new_W, new_H), interpolation=cv2.INTER_NEAREST
-            )
+            if range_depth.shape[0] % new_H == 0 and range_depth.shape[1] % new_W == 0:
+                range_depth = torch.from_numpy(range_depth)[None, None, ...]
+                range_depth = pool_resize(range_depth, (new_H, new_W), mode="avg_pool").squeeze().numpy()
+            else:
+                range_depth = cv2.resize(
+                    range_depth, (new_W, new_H), interpolation=cv2.INTER_NEAREST # H, W are reversed
+                )
         if range_int is not None and range_int.shape != (new_H, new_W):
-            range_int = cv2.resize(
-                range_int, (new_W, new_H), interpolation=cv2.INTER_NEAREST
-            )
+            if range_int.shape[0] % new_H == 0 and range_int.shape[1] % new_W == 0:
+                range_int = torch.from_numpy(range_int)[None, None, ...]
+                range_int = pool_resize(range_int, (new_H, new_W), mode="avg_pool").squeeze().numpy()
+            else:
+                range_int = cv2.resize(
+                    range_int, (new_W, new_H), interpolation=cv2.INTER_NEAREST
+                )
         if mask is not None and mask.shape != (new_H, new_W):
-            mask = cv2.resize(
-                mask, (new_W, new_H), interpolation=cv2.INTER_NEAREST
-            )
+            if mask.shape[0] % new_H == 0 and mask.shape[1] % new_W == 0:
+                mask = torch.from_numpy(mask)[None, None, ...]
+                mask = pool_resize(mask, (new_H, new_W), mode="max_pool").squeeze().numpy()
+            else:
+                mask = cv2.resize(
+                    mask, (new_W, new_H), interpolation=cv2.INTER_NEAREST
+                )
         if bbox_range_coords is not None:
-            bbox_range_coords[:, 0] = bbox_range_coords[:, 0] * new_W / self.W
-            bbox_range_coords[:, 1] = bbox_range_coords[:, 1] * new_H / self.H
+            bbox_range_coords[:, 0] = bbox_range_coords[:, 0] * new_W / self.current_W
+            bbox_range_coords[:, 1] = bbox_range_coords[:, 1] * new_H / self.current_H
 
-        self.W, self.H = new_W, new_H
+        self.current_W, self.current_H = new_W, new_H
 
         return range_depth, range_int, mask, bbox_range_coords
 
@@ -282,9 +310,9 @@ class LidarConverter:
         if mask is not None:
             mask = np.tile(mask, n)
         if bbox_range_coords is not None:
-            bbox_range_coords[:, 0] += self.W
+            bbox_range_coords[:, 0] += self.current_W
 
-        self.W *= n
+        self.current_W *= n
 
         return range_depth, range_int, mask, bbox_range_coords
 
@@ -339,6 +367,8 @@ class LidarConverter:
         bbox_range_coords = bbox_range_coords - np.array([center_x - d_left, 0, 0])
         bbox_range_coords[:, 0]
         crop_left = center_x - d_left
+
+        self.current_W = width
 
         return range_depth, range_int, mask, bbox_range_coords, crop_left
 

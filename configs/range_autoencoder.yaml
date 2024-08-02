@@ -8,7 +8,7 @@ object_area_crop: 0.2
 range_height: 256
 range_width: 256 # use feature map crop instead of range crop
 
-batch_size: 20
+batch_size: 16
 range_object_norm: True
 range_object_norm_scale: 0.75
 range_int_norm: True
@@ -39,18 +39,19 @@ model:
     range_int_norm: ${range_int_norm}
 
     lossconfig:
-      target: ldm.modules.losses.LPIPSWithDiscriminator
+      target: ldm.modules.losses.LidarWithDiscriminator
       params:
         disc_start: 50001
         kl_weight: 0.000001
         disc_weight: 0.5
+        disc_in_channels: 2
 
     ddconfig:
       double_z: true
       z_channels: 4
       resolution: ${image_height}
-      in_channels: 3
-      out_ch: 3
+      in_channels: 2
+      out_ch: 2
       ch: 128
       ch_mult:
       - 1
@@ -115,7 +116,7 @@ data:
 
 lightning:
   trainer:
-    max_epochs: 40
+    max_epochs: 8
     num_nodes: 1
     accelerator: 'gpu'
     gpus: "0"

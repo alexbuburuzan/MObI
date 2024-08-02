@@ -9,6 +9,7 @@ from ldm.modules.distributions.distributions import DiagonalGaussianDistribution
 
 from ldm.util import instantiate_from_config, make_contiguous
 from ldm.data.utils import get_lidar_vis, inverse_depth_normalization
+from ldm.data.lidar_converter import pool_resize
 
 
 class AutoencoderKL(pl.LightningModule):
@@ -126,17 +127,26 @@ class AutoencoderKL(pl.LightningModule):
 
     def configure_optimizers(self):
         lr = self.learning_rate
-        opt_ae = torch.optim.Adam(list(self.encoder.parameters())+
-                                  list(self.decoder.parameters())+
-                                  list(self.quant_conv.parameters())+
-                                  list(self.post_quant_conv.parameters()),
-                                  lr=lr, betas=(0.5, 0.9))
-        opt_disc = torch.optim.Adam(self.loss.discriminator.parameters(),
-                                    lr=lr, betas=(0.5, 0.9))
+
+        adapter_params = []
+        for name, param in self.named_parameters():
+            if "lidar" in name:
+                param.requires_grad = True
+                adapter_params.append(param)
+            elif "discriminator" in name:
+                param.requires_grad = True
+            else:
+                param.requires_grad = False
+
+        opt_ae = torch.optim.Adam(adapter_params, lr=lr, betas=(0.5, 0.9))
+        opt_disc = torch.optim.Adam(self.loss.discriminator.parameters(), lr=lr, betas=(0.5, 0.9))
         return [opt_ae, opt_disc], []
 
     def get_last_layer(self):
-        return self.decoder.conv_out.weight
+        if hasattr(self.decoder, "conv_out"):
+            return self.decoder.conv_out.weight
+        else:
+            return self.decoder.conv_out_lidar.weight
 
     @torch.no_grad()
     def log_images(self, batch, only_inputs=False, split="train", **kwargs):
@@ -146,29 +156,17 @@ class AutoencoderKL(pl.LightningModule):
         if not only_inputs:
             xrec, posterior = self(x)
             xrec = torch.clamp(xrec, -1., 1.)
-
-            def resize(x, size):
-                # return F.interpolate(x, size=size, mode='nearest')
-                x = x.permute([0, 2, 3, 1])
-                kernel_size = x.shape[1] // size[0]
-                x = x.unfold(1, kernel_size, kernel_size)
-                x = x.reshape(*x.shape[:3], -1)
-                x = x.median(dim=-1).values
-                x = x.unsqueeze(1)
-                return x
-
-            new_size = (32, xrec.shape[-1])
             
-            inpaint_depth = resize(batch["lidar"]["range_data_inpaint"][:, [0, 1]], size=new_size)
-            input_depth = resize(batch["lidar"]["range_data"][:, [0, 1]], size=new_size)
-            rec_depth = resize(xrec[:, [0, 1]], size=new_size)
+            inpaint_depth = batch["lidar"]["range_data_inpaint"][:, [0]]
+            input_depth = batch["lidar"]["range_data"][:, [0]]
+            rec_depth = xrec[:, [0]]
 
-            inpaint_int = resize(batch["lidar"]["range_data_inpaint"][:, [2]], size=new_size)
-            input_int = resize(batch["lidar"]["range_data"][:, [2]], size=new_size)
-            rec_int = resize(xrec[:, [2]], size=new_size)
+            inpaint_int = batch["lidar"]["range_data_inpaint"][:, [1]]
+            input_int = batch["lidar"]["range_data"][:, [1]]
+            rec_int = xrec[:, [1]]
 
-            mask = resize(batch["lidar"]["range_mask"][:, [0]], size=new_size)
-            instance_mask = resize(batch["lidar"]["range_instance_mask"], size=new_size)
+            mask = 1 - batch["lidar"]["range_mask"][:, [0]]
+            instance_mask = batch["lidar"]["range_instance_mask"]
 
             log["range_depth_pred"] = torch.cat([input_depth, inpaint_depth, instance_mask, rec_depth], dim=-2)
             log["range_int_pred"] = torch.cat([input_int, inpaint_int, instance_mask, rec_int], dim=-2)
@@ -199,9 +197,15 @@ class AutoencoderKL(pl.LightningModule):
                     B = pred.shape[0]
                     object_scores, mask_scores, full_scores = [], [], []
                     for i in range(B):
-                        object_dist = self.range_l1_metric(pred[i][instance_mask[i] == 1], gt[i][instance_mask[i] == 1]).flatten()
-                        mask_dist = self.range_l1_metric(pred[i][mask[i] == 0], gt[i][mask[i] == 0]).flatten()
-                        full_dist = self.range_l1_metric(pred[i], gt[i]).flatten()
+                        new_size = (32, batch["lidar"]["width_crop"][i].item())
+                        pred_ = pool_resize(pred[[i]], new_size)
+                        instance_mask_ = pool_resize(instance_mask[[i]], new_size, mode='max_pool')
+                        mask_ = pool_resize(mask[[i]], new_size, mode="max_pool")
+                        gt_ = pool_resize(gt[[i]], new_size)
+
+                        object_dist = self.range_l1_metric(pred_[instance_mask_ == 1], gt_[instance_mask_ == 1]).flatten()
+                        mask_dist = self.range_l1_metric(pred_[mask_ == 0], gt_[mask_ == 0]).flatten()
+                        full_dist = self.range_l1_metric(pred_, gt_).flatten()
 
                         if reduction == "mean":
                             object_scores.append(object_dist.mean().item())
@@ -218,7 +222,7 @@ class AutoencoderKL(pl.LightningModule):
                     lidar_metrics.update({
                         f"{reduction}/object_{pred_name}_L1" : np.mean(object_scores),
                         f"{reduction}/mask_{pred_name}_L1" : np.mean(mask_scores),
-                        f"{reduction}/full_{pred_name}_L1" : np.mean(full_scores),
+                        # f"{reduction}/full_{pred_name}_L1" : np.mean(full_scores),
                     })
 
             # Make metrics more interpretable by scaling them to the original range
@@ -235,6 +239,7 @@ class AutoencoderKL(pl.LightningModule):
                 range_shift_left=batch["lidar"]["range_shift_left"],
                 range_pitch=batch["lidar"]["range_pitch"],
                 range_yaw=batch["lidar"]["range_yaw"],
+                width_crop=batch["lidar"]["width_crop"],
             )
 
             log["lidar_input-rec"] = torch.cat([input_vis, rec_vis], dim=-2)

@@ -8,20 +8,6 @@ from torchvision.transforms import Resize
 import torch.nn.functional as F
 
 
-def resize(x, size, mode="avg_pool"):
-    if mode == "avg_pool":
-        _, _, height, width = x.shape
-        x = F.avg_pool2d(x, kernel_size=(height // size[0], width // size[1]))
-    elif mode == "max_pool":
-        _, _, height, width = x.shape
-        x = F.max_pool2d(x, kernel_size=(height // size[0], width // size[1]))
-    elif mode == "nearest":
-        x = F.interpolate(x, size=size, mode="nearest")
-    else:
-        x = F.interpolate(x, size=size, mode='bilinear', align_corners=False)
-    return x
-
-
 def get_image_coords(bbox_corners, lidar2image, include_depth=False):
     """
     Get the camera coordinates of the 3D bounding box
