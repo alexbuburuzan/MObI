@@ -25,8 +25,9 @@ from ldm.models.autoencoder import IdentityFirstStage, AutoencoderKL
 from ldm.models.lidar_diffusion import VQModelInterface
 from ldm.modules.diffusionmodules.util import make_beta_schedule, extract_into_tensor, noise_like
 from ldm.models.diffusion.ddim import DDIMSampler
-from ldm.data.utils import get_camera_vis, get_lidar_vis, inverse_depth_normalization, resize
+from ldm.data.utils import get_camera_vis, get_lidar_vis, inverse_depth_normalization
 from torchvision.transforms import Resize
+from ldm.data.lidar_converter import pool_resize
 
 import random
 import torch.nn.functional as F
@@ -1494,20 +1495,19 @@ class LatentDiffusion(DDPM):
         if self.use_lidar:
             lidar_sample = self.decode_first_stage(h_lidar, module_name="lidar_stage_model")
             lidar_sample = torch.clamp(lidar_sample, -1., 1.)
-            new_size = (32, lidar_sample.shape[-1])
             
-            inpaint_depth = resize(batch["lidar"]["range_data_inpaint"][:, [0]], size=new_size)
-            sample_depth = resize(lidar_sample[:, [0]], size=new_size)
-            input_depth = resize(batch["lidar"]["range_data"][:, [0]], size=new_size)
-            rec_depth = resize(data["lidar_rec"][:, [0]], size=new_size)
+            inpaint_depth = batch["lidar"]["range_data_inpaint"][:, [0]]
+            sample_depth = lidar_sample[:, [0]]
+            input_depth = batch["lidar"]["range_data"][:, [0]]
+            rec_depth = data["lidar_rec"][:, [0]]
 
-            inpaint_int = resize(batch["lidar"]["range_data_inpaint"][:, [1]], size=new_size)
-            sample_int = resize(lidar_sample[:, [1]], size=new_size)
-            input_int = resize(batch["lidar"]["range_data"][:, [1]], size=new_size)
-            rec_int = resize(data["lidar_rec"][:, [1]], size=new_size)
+            inpaint_int = batch["lidar"]["range_data_inpaint"][:, [1]]
+            sample_int = lidar_sample[:, [1]]
+            input_int = batch["lidar"]["range_data"][:, [1]]
+            rec_int = data["lidar_rec"][:, [1]]
 
-            mask = resize(1 - batch["lidar"]["range_mask"][:, [0]], size=new_size, mode="max_pool")
-            instance_mask = resize(batch["lidar"]["range_instance_mask"], size=new_size, mode="max_pool")
+            mask = 1 - batch["lidar"]["range_mask"][:, [0]]
+            instance_mask = batch["lidar"]["range_instance_mask"]
 
             log["range_depth_pred"] = torch.cat([input_depth, inpaint_depth, instance_mask, sample_depth, rec_depth], dim=-2)
             log["range_int_pred"] = torch.cat([input_int, inpaint_int, instance_mask, sample_int, rec_int], dim=-2)
@@ -1548,10 +1548,10 @@ class LatentDiffusion(DDPM):
                     object_scores, mask_scores, full_scores = [], [], []
                     for i in range(B):
                         new_size = (32, batch["lidar"]["width_crop"][i].item())
-                        pred_ = resize(pred[[i]], new_size)
-                        instance_mask_ = resize(instance_mask[[i]], new_size, mode='max_pool')
-                        mask_ = resize(mask[[i]], new_size, mode="max_pool")
-                        gt_ = resize(gt[[i]], new_size)
+                        pred_ = pool_resize(pred[[i]], new_size)
+                        instance_mask_ = pool_resize(instance_mask[[i]], new_size, mode='max_pool')
+                        mask_ = pool_resize(mask[[i]], new_size, mode="max_pool")
+                        gt_ = pool_resize(gt[[i]], new_size)
 
                         object_dist = self.range_l1_metric(pred_[instance_mask_ == 1], gt_[instance_mask_ == 1]).flatten()
                         mask_dist = self.range_l1_metric(pred_[mask_ == 1], gt_[mask_ == 1]).flatten()
@@ -1667,9 +1667,7 @@ class DiffusionWrapper(pl.LightningModule):
             if (
                 "cond_adapter" in name or
                 "lidar" in name or 
-                "cross_modal" in name or
-                name[:4] == "out." or # image out projection
-                "input_blocks.0.0" in name # image in projection
+                "cross_modal" in name
             ):
                 param.requires_grad = True
             else:
