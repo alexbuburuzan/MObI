@@ -81,7 +81,7 @@ class Downsample(nn.Module):
 
 class ResnetBlock(nn.Module):
     def __init__(self, *, in_channels, out_channels=None, conv_shortcut=False,
-                 dropout, temb_channels=512):
+                 dropout, temb_channels=512, kernel_size=3, padding=1):
         super().__init__()
         self.in_channels = in_channels
         out_channels = in_channels if out_channels is None else out_channels
@@ -91,9 +91,9 @@ class ResnetBlock(nn.Module):
         self.norm1 = Normalize(in_channels)
         self.conv1 = torch.nn.Conv2d(in_channels,
                                      out_channels,
-                                     kernel_size=3,
+                                     kernel_size=kernel_size,
                                      stride=1,
-                                     padding=1)
+                                     padding=padding)
         if temb_channels > 0:
             self.temb_proj = torch.nn.Linear(temb_channels,
                                              out_channels)
@@ -101,16 +101,16 @@ class ResnetBlock(nn.Module):
         self.dropout = torch.nn.Dropout(dropout)
         self.conv2 = torch.nn.Conv2d(out_channels,
                                      out_channels,
-                                     kernel_size=3,
+                                     kernel_size=kernel_size,
                                      stride=1,
-                                     padding=1)
+                                     padding=padding)
         if self.in_channels != self.out_channels:
             if self.use_conv_shortcut:
                 self.conv_shortcut = torch.nn.Conv2d(in_channels,
                                                      out_channels,
-                                                     kernel_size=3,
+                                                     kernel_size=kernel_size,
                                                      stride=1,
-                                                     padding=1)
+                                                     padding=padding)
             else:
                 self.nin_shortcut = torch.nn.Conv2d(in_channels,
                                                     out_channels,
@@ -367,7 +367,7 @@ class Model(nn.Module):
 
 class Encoder(nn.Module):
     def __init__(self, *, ch, out_ch, ch_mult=(1,2,4,8), num_res_blocks,
-                 attn_resolutions, dropout=0.0, resamp_with_conv=True, in_channels,
+                 attn_resolutions, lidar_adapter=False, dropout=0.0, resamp_with_conv=True, in_channels,
                  resolution, z_channels, double_z=True, use_linear_attn=False, attn_type="vanilla",
                  **ignore_kwargs):
         super().__init__()
@@ -378,13 +378,33 @@ class Encoder(nn.Module):
         self.num_res_blocks = num_res_blocks
         self.resolution = resolution
         self.in_channels = in_channels
+        self.lidar_adapter = lidar_adapter
 
         # downsampling
-        self.conv_in = torch.nn.Conv2d(in_channels,
-                                       self.ch,
-                                       kernel_size=3,
-                                       stride=1,
-                                       padding=1)
+        if self.lidar_adapter:
+            self.conv_in_lidar = torch.nn.Conv2d(in_channels,
+                                                 self.ch,
+                                                 kernel_size=(1, 5),
+                                                 stride=1,
+                                                 padding=(0, 2))
+            self.res_block_lidar1 = ResnetBlock(in_channels=self.ch,
+                                                out_channels=self.ch,
+                                                temb_channels=self.temb_ch,
+                                                kernel_size=(1, 5),
+                                                padding=(0, 2),
+                                                dropout=dropout)
+            self.res_block_lidar2 = ResnetBlock(in_channels=self.ch,
+                                                out_channels=self.ch,
+                                                temb_channels=self.temb_ch,
+                                                kernel_size=(1, 5),
+                                                padding=(0, 2),
+                                                dropout=dropout)
+        else:
+            self.conv_in = torch.nn.Conv2d(in_channels,
+                                        self.ch,
+                                        kernel_size=3,
+                                        stride=1,
+                                        padding=1)
 
         curr_res = resolution
         in_ch_mult = (1,)+tuple(ch_mult)
@@ -434,9 +454,19 @@ class Encoder(nn.Module):
     def forward(self, x):
         # timestep embedding
         temb = None
+        hs = []
+
+        if self.lidar_adapter:
+            x = self.conv_in_lidar(x)
+            hs.append(x)
+            x = self.res_block_lidar1(x, temb)
+            hs.append(x)
+            x = self.res_block_lidar2(x, temb)
+            hs.append(x)
+        else:
+            hs.append(self.conv_in(x))
 
         # downsampling
-        hs = [self.conv_in(x)]
         for i_level in range(self.num_resolutions):
             for i_block in range(self.num_res_blocks):
                 h = self.down[i_level].block[i_block](hs[-1], temb)
@@ -461,7 +491,7 @@ class Encoder(nn.Module):
 
 class Decoder(nn.Module):
     def __init__(self, *, ch, out_ch, ch_mult=(1,2,4,8), num_res_blocks,
-                 attn_resolutions, dropout=0.0, resamp_with_conv=True, in_channels,
+                 attn_resolutions, lidar_adapter=False, dropout=0.0, resamp_with_conv=True, in_channels,
                  resolution, z_channels, give_pre_end=False, tanh_out=False, use_linear_attn=False,
                  attn_type="vanilla", **ignorekwargs):
         super().__init__()
@@ -474,6 +504,7 @@ class Decoder(nn.Module):
         self.in_channels = in_channels
         self.give_pre_end = give_pre_end
         self.tanh_out = tanh_out
+        self.lidar_adapter = lidar_adapter
 
         # compute in_ch_mult, block_in and curr_res at lowest res
         in_ch_mult = (1,)+tuple(ch_mult)
@@ -525,12 +556,33 @@ class Decoder(nn.Module):
             self.up.insert(0, up) # prepend to get consistent order
 
         # end
-        self.norm_out = Normalize(block_in)
-        self.conv_out = torch.nn.Conv2d(block_in,
-                                        out_ch,
-                                        kernel_size=3,
-                                        stride=1,
-                                        padding=1)
+        if self.lidar_adapter:
+            self.res_block_lidar1 = ResnetBlock(in_channels=block_in,
+                                                out_channels=block_in,
+                                                temb_channels=self.temb_ch,
+                                                kernel_size=(1, 5),
+                                                padding=(0, 2),
+                                                dropout=dropout)
+            self.norm_out_lidar1 = Normalize(block_in)
+            self.res_block_lidar2 = ResnetBlock(in_channels=block_in,
+                                                out_channels=block_in,
+                                                temb_channels=self.temb_ch,
+                                                kernel_size=(1, 5),
+                                                padding=(0, 2),
+                                                dropout=dropout)
+            self.norm_out_lidar2 = Normalize(block_in)
+            self.conv_out_lidar = torch.nn.Conv2d(block_in,
+                                                  out_ch,
+                                                  kernel_size=(1, 5),
+                                                  stride=1,
+                                                  padding=(0, 2))
+        else:
+            self.norm_out = Normalize(block_in)
+            self.conv_out = torch.nn.Conv2d(block_in,
+                                            out_ch,
+                                            kernel_size=3,
+                                            stride=1,
+                                            padding=1)
 
     def forward(self, z):
         #assert z.shape[1:] == self.z_shape[1:]
@@ -560,9 +612,19 @@ class Decoder(nn.Module):
         if self.give_pre_end:
             return h
 
-        h = self.norm_out(h)
-        h = nonlinearity(h)
-        h = self.conv_out(h)
+        if self.lidar_adapter:
+            h = self.res_block_lidar1(h, temb)
+            h = self.norm_out_lidar1(h)
+            h = nonlinearity(h)
+            h = self.res_block_lidar2(h, temb)
+            h = self.norm_out_lidar2(h)
+            h = nonlinearity(h)
+            h = self.conv_out_lidar(h)
+        else:
+            h = self.norm_out(h)
+            h = nonlinearity(h)
+            h = self.conv_out(h)
+
         if self.tanh_out:
             h = torch.tanh(h)
         return h
