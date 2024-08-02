@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 import torch
+from scipy.stats import beta
 
 import torchvision.transforms as T
 import torch.utils.data as data
@@ -56,7 +57,7 @@ class NuScenesDataset(data.Dataset):
         expand_ref_ratio=0,
         ref_aug=True,
         prob_use_3d_edit_mask=1,
-        ref_mode="same-ref", # same-ref, track-ref, random-ref, no-ref
+        ref_mode="id-ref", # id-ref, track-ref, erase-ref, in-domain-ref, cross-domain-ref
         image_height=512,
         image_width=512,
         range_height=512,
@@ -67,7 +68,7 @@ class NuScenesDataset(data.Dataset):
         reference_image_max_w=1400,
         frustum_iou_max=0.5,
         camera_visibility_min=0.7,
-        object_area_crop=0.1,
+        object_area_crop=0.2,
         object_random_crop=True,
         min_lidar_points=100,
         rot_every_angle=0,
@@ -76,6 +77,7 @@ class NuScenesDataset(data.Dataset):
         use_camera=True,
         random_range_crop=False,
         num_samples_per_class=None,
+        fixed_sampling=True,
         return_original_image=False,
         range_object_norm=False,
         range_object_norm_scale=0.75,
@@ -97,6 +99,8 @@ class NuScenesDataset(data.Dataset):
         self.range_object_norm = range_object_norm
         self.range_object_norm_scale = range_object_norm_scale
         self.range_int_norm = range_int_norm
+        self.num_samples_per_class = num_samples_per_class
+        self.fixed_sampling = fixed_sampling
 
         # Dimensions
         self.image_height = image_height
@@ -104,26 +108,35 @@ class NuScenesDataset(data.Dataset):
         self.range_height = range_height
         self.range_width = range_width
 
+        self.object_classes = object_classes
         self.objects_meta_all = pd.read_csv(object_database_path, index_col=0)
         # Filter out small, occluded objects
         self.objects_meta_all = self.objects_meta_all[
-            (self.objects_meta_all["reference_image_h"] >= reference_image_min_h) &
-            (self.objects_meta_all["reference_image_h"] <= reference_image_max_h) &
-            (self.objects_meta_all["reference_image_w"] >= reference_image_min_w) &
-            (self.objects_meta_all["reference_image_w"] <= reference_image_max_w) &
-            (self.objects_meta_all["max_iou_overlap"] <= frustum_iou_max) &
-            (self.objects_meta_all["object_class"].isin(object_classes)) &
-            (self.objects_meta_all["camera_visibility_mask"] >= camera_visibility_min) &
-            (self.objects_meta_all["num_lidar_points"] >= min_lidar_points)
+            ((self.objects_meta_all["reference_image_h"] >= reference_image_min_h) &
+             (self.objects_meta_all["reference_image_h"] <= reference_image_max_h) &
+             (self.objects_meta_all["reference_image_w"] >= reference_image_min_w) &
+             (self.objects_meta_all["reference_image_w"] <= reference_image_max_w) &
+             (self.objects_meta_all["max_iou_overlap"] <= frustum_iou_max) &
+             (self.objects_meta_all["object_class"].isin(object_classes)) &
+             (self.objects_meta_all["camera_visibility_mask"] >= camera_visibility_min) &
+             (self.objects_meta_all["num_lidar_points"] >= min_lidar_points)) |
+            (self.objects_meta_all["object_class"] == "empty")
         ]
 
         # Select an object from each class when testing
-        if num_samples_per_class is not None:
+        if num_samples_per_class is not None and fixed_sampling:
             self.objects_meta = self.objects_meta_all.groupby("object_class").apply(
                 lambda x: x.sample(num_samples_per_class)
-            ).reset_index(drop=True)
+            )
         else:
             self.objects_meta = self.objects_meta_all
+        self.objects_meta = self.objects_meta.reset_index(drop=True)
+
+        self.idx_lists = []
+        for object_class in self.object_classes:
+            self.idx_lists.append(
+                self.objects_meta[self.objects_meta['object_class'] == object_class].index.tolist()
+            )
 
         if rot_every_angle != 0:
             angles = np.arange(0, 360, rot_every_angle)
@@ -142,14 +155,18 @@ class NuScenesDataset(data.Dataset):
         if ref_aug:
             ref_augs += [
                 A.HorizontalFlip(p=0.5),
-                A.Rotate(limit=20),
-                A.Blur(p=0.3),
-                A.ElasticTransform(p=0.3)
+                A.Rotate(limit=30),
+                A.Blur(p=0.5),
+                A.RandomBrightnessContrast(
+                    brightness_limit=(-0.3, 0.3), contrast_limit=(-0.3, 0.3), p=0.5),
             ]
         self.ref_transform = A.Compose(ref_augs)
         self.image_resize = T.Resize([image_height, image_width])
 
     def __getitem__(self, index):
+        if self.num_samples_per_class and self.fixed_sampling is False:
+            label = index % len(self.object_classes)
+            index = np.random.choice(self.idx_lists[label])
         object_meta = self.objects_meta.iloc[index]
 
         if self.rot_test_scene is not None:
@@ -197,21 +214,41 @@ class NuScenesDataset(data.Dataset):
         return data
     
     def __len__(self):
-        return len(self.objects_meta)
+        if self.num_samples_per_class is None or self.fixed_sampling:
+            return len(self.objects_meta)
+        return len(self.object_classes) * self.num_samples_per_class
     
     def get_reference(self, current_object_meta):
-        if self.ref_mode == "no-ref":
-            return np.zeros((224, 224, 3), dtype=np.uint8), None, 0
-        elif self.ref_mode == "same-ref":
+        if self.ref_mode == "id-ref" or self.ref_mode == "erase-ref" or current_object_meta["object_class"] == "empty":
             reference_meta = current_object_meta
-        elif self.ref_mode == "random-ref":
+        elif self.ref_mode == "in-domain-ref":
             reference_meta = self.objects_meta_all[
-                self.objects_meta_all["object_class"] == current_object_meta["object_class"]
+                self.objects_meta_all["object_class"] == current_object_meta["object_class"] &
+                self.objects_meta_all["is_raining"] == current_object_meta["is_raining"] &
+                self.objects_meta_all["is_night"] == current_object_meta["is_night"]
+            ].sample(1).iloc[0]
+        elif self.ref_mode = "cross-domain-ref":
+            reference_meta = self.objects_meta_all[
+                self.objects_meta_all["object_class"] == current_object_meta["object_class"] &
+                (self.objects_meta_all["is_raining"] != current_object_meta["is_raining"] |
+                self.objects_meta_all["is_night"] != current_object_meta["is_night"])
             ].sample(1).iloc[0]
         elif self.ref_mode == "track-ref":
-            reference_meta = self.objects_meta_all[
+            # Sample tracked reference according to a beta distribution given the time difference
+            tracked_references = self.objects_meta_all[
                 self.objects_meta_all["track_id"] == current_object_meta["track_id"]
-            ].sample(1).iloc[0]
+            ]
+            if len(tracked_references):
+                reference_meta = tracked_references.iloc[0]
+            else:
+                intervals = abs(tracked_references.timestamp - current_object_meta.timestamp)
+                intervals /= max(intervals)
+                # Sample according to a Beta distribution
+                weights = beta.pdf(intervals, 4, 1)
+                weights /= np.sum(weights)
+                selected_index = np.random.choice(len(intervals), p=weights)
+
+                reference_meta = tracked_references.iloc[selected_index]
         else:
             raise ValueError("Invalid ref_mode")
 
@@ -222,8 +259,13 @@ class NuScenesDataset(data.Dataset):
         image_path = ref_scene_info["image_paths"][cam_idx]
 
         ref_bbox_3d = ref_scene_info["gt_bboxes_3d_corners"][ref_obj_idx]
-        ref_label = ref_scene_info["gt_labels"][ref_obj_idx]
         ref_class = reference_meta["object_class"]
+        ref_label = self.object_classes.index(ref_class)
+
+        if self.ref_mode == "erase-ref" or current_object_meta["object_class"] == "empty":
+            ref_image = np.zeros((224, 224, 3))
+            ref_class = "empty"
+            ref_label = 0
         
         image = Image.open(image_path).convert("RGB")
         W, H = image.size
@@ -319,7 +361,7 @@ class NuScenesDataset(data.Dataset):
             range_int = 1 - torch.exp(-2 * (range_int + 1))
             range_int = torch.clamp(2 * range_int - 1, -1, 1)
         
-        range_data = torch.concat([range_depth, range_depth, range_int], dim=0)
+        range_data = torch.concat([range_depth, range_int], dim=0)
 
         # Mask
         range_mask = get_range_inpaint_mask(
