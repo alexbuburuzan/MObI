@@ -500,7 +500,8 @@ def main():
                         for k, v in lidar_metrics.items():
                             if k not in metrics:
                                 metrics[k] = []
-                            metrics[k].append(v.item())
+                            if not np.isnan(v):
+                                metrics[k].append(v.item())
 
     df = {"mean" : {}, "median" : {}}
     for score_name in metrics:

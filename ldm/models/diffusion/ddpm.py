@@ -1576,7 +1576,7 @@ class LatentDiffusion(DDPM):
                     })
 
             # Make metrics more interpretable by scaling them to the original range
-            lidar_metrics = {f"{split}/{k}": v * 25.6 if "depth" in k else v * 128 for k, v in lidar_metrics.items()}
+            lidar_metrics = {f"{split}/{k}": v * ((54 - 1.4) / 2) if "depth" in k else v * 128 for k, v in lidar_metrics.items()}
             if log_metrics:
                 self.log_dict(lidar_metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
