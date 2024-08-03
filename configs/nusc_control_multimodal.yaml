@@ -3,8 +3,7 @@ use_lidar: True
 
 image_height: 512
 image_width: 512
-latent_size: 64 # image_width // 8 
-object_area_crop: 0.2
+latent_size: 64 # image_width // 8
 
 range_height: 512
 range_width: 512 # use feature map crop instead of range crop
@@ -15,7 +14,11 @@ range_object_norm_scale: 0.75
 range_int_norm: True
 num_workers_per_gpu: 8
 
+ref_mode: track-ref
+object_area_crop: 0.2
+
 classes:
+  - empty # erase masks
   - car
   - pedestrian
   # - traffic_cone
@@ -116,13 +119,13 @@ model:
       params:
         embed_dim: 4
         monitor: val/rec_loss
-        ckpt_path: "checkpoints/image_vae.ckpt"
+        ckpt_path: "models/LiDAR/2024-07-26T00-10-07_range_autoencoder/checkpoints/epoch=000007.ckpt"
         ddconfig:
           double_z: true
           z_channels: 4
           resolution: ${image_height}
-          in_channels: 3
-          out_ch: 3
+          in_channels: 2
+          out_ch: 2
           ch: 128
           ch_mult:
           - 1
@@ -131,7 +134,7 @@ model:
           - 4
           num_res_blocks: 2
           attn_resolutions: []
-          lidar_adapter: False
+          lidar_adapter: True
           dropout: 0.0
         lossconfig:
           target: torch.nn.Identity
@@ -139,6 +142,7 @@ model:
     cond_stage_config:
       target: ldm.modules.encoders.modules.FrozenCLIPImageEmbedder
       params:
+        classes: ${classes}
         conditions: ${conditions}
 
 data:
@@ -158,8 +162,11 @@ data:
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0
               object_area_crop: ${object_area_crop}
+              num_samples_per_class: 4096
+              fixed_sampling: False
               ref_aug: True
-              ref_mode: same-ref
+              ref_mode: ${ref_mode}
+              include_erase_boxes: True
               image_height: ${image_height}
               image_width: ${image_width}
               range_height: ${range_height}
@@ -180,8 +187,10 @@ data:
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0
               object_area_crop: ${object_area_crop}
+              num_samples_per_class: 256
+              fixed_sampling: True
               ref_aug: True
-              ref_mode: same-ref
+              ref_mode: ${ref_mode}
               image_height: ${image_height}
               image_width: ${image_width}
               range_height: ${range_height}
@@ -202,10 +211,11 @@ data:
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0
               object_area_crop: ${object_area_crop}
-              ref_aug: False
               num_samples_per_class: 64
+              fixed_sampling: True
               object_random_crop: False
-              ref_mode: same-ref
+              ref_aug: False
+              ref_mode: ${ref_mode}
               image_height: ${image_height}
               image_width: ${image_width}
               range_height: ${range_height}
@@ -228,7 +238,7 @@ data:
               prob_use_3d_edit_mask: 1
               ref_aug: False
               object_random_crop: False
-              ref_mode: same-ref
+              ref_mode: "id-ref"
               image_height: ${image_height}
               image_width: ${image_width}
               range_height: ${range_height}
