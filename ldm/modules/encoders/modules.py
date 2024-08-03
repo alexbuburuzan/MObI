@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from functools import partial
 import logging
-from transformers import CLIPVisionModel
+from transformers import CLIPVisionModel, CLIPTokenizer, CLIPTextModel
 from ldm.modules.x_transformer import Encoder, TransformerWrapper  # TODO: can we directly rely on lucidrains code and simply add this as a reuirement? --> test
 from .xf import LayerNorm, Transformer
 
@@ -14,19 +14,29 @@ class AbstractEncoder(nn.Module):
         raise NotImplementedError
 
 
-
 class ClassEmbedder(nn.Module):
-    def __init__(self, embed_dim, n_classes=1000, key='class'):
+    def __init__(self, classes, class_encoder_version):
         super().__init__()
-        self.key = key
-        self.embedding = nn.Embedding(n_classes, embed_dim)
 
-    def forward(self, batch, key=None):
-        if key is None:
-            key = self.key
-        # this is for use in crossattn
-        c = batch[key][:, None]
-        c = self.embedding(c.to(torch.int))
+        tokenizer = CLIPTokenizer.from_pretrained(class_encoder_version)
+        text_model = CLIPTextModel.from_pretrained(class_encoder_version)
+
+        if torch.cuda.is_available():
+            text_model.cuda()
+
+        class_texts = ["a " + c if c != "empty" else c for c in classes]
+        inputs = tokenizer(class_texts, return_tensors="pt", padding=True, truncation=True)
+
+        inputs = {k: v.to(text_model.device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            text_embeddings = text_model(**inputs).last_hidden_state
+
+        # CLS token
+        self.text_embeddings = text_embeddings[:, 0, :]
+
+    def forward(self, c):
+        c = self.text_embeddings[c.to(int)]
         return c
 
 
@@ -136,6 +146,7 @@ class FrozenCLIPImageEmbedder(AbstractEncoder):
     """Uses the CLIP transformer encoder for text (from Hugging Face)"""
     def __init__(
             self,
+            classes,
             conditions,
             version="openai/clip-vit-large-patch14",
     ) -> None:
@@ -146,8 +157,10 @@ class FrozenCLIPImageEmbedder(AbstractEncoder):
             self.mapper = Transformer(1, 1024, 5, 1)
         
         if "ref_bbox" in conditions and "ref_label" in conditions:
-            self.bbox_embedder = BBoxAndClassEmbedder()
-
+            self.bbox_embedder = BBoxAndClassEmbedder(
+                classes=classes,
+                class_encoder_version=version,
+            )
         self.freeze()
 
     def freeze(self):
@@ -177,25 +190,26 @@ class FrozenCLIPImageEmbedder(AbstractEncoder):
 class BBoxAndClassEmbedder(AbstractEncoder):
     def __init__(
         self,
-        n_bbox_classes=10,
-        class_token_dim=768,
+        classes,
+        class_encoder_version="openai/clip-vit-large-patch14",
         embedder_num_freqs=4,
         proj_dims=[768, 512, 512, 768],
     ):
         super().__init__()
-        # BBox embedding
-        self.n_bbox_classes = n_bbox_classes
-        self.class_token_dim = class_token_dim
-
         self.fourier_embedder = get_embedder(
             input_dims=3,
             num_freqs=embedder_num_freqs,
         )
-        self.class_embedder = ClassEmbedder(class_token_dim, n_classes=n_bbox_classes)
+        self.class_embedder = ClassEmbedder(
+            classes=classes,
+            class_encoder_version=class_encoder_version,
+        )
+        text_embedding_dim = self.class_embedder.text_embeddings.shape[-1]
+
         self.bbox_proj = nn.Linear(
             self.fourier_embedder.out_dim * 8, proj_dims[0])
         self.second_linear = nn.Sequential(
-            nn.Linear(proj_dims[0] + class_token_dim, proj_dims[1]),
+            nn.Linear(proj_dims[0] + text_embedding_dim, proj_dims[1]),
             nn.SiLU(),
             nn.Linear(proj_dims[1], proj_dims[2]),
             nn.SiLU(),
@@ -207,8 +221,7 @@ class BBoxAndClassEmbedder(AbstractEncoder):
             bbox.shape[0], -1).type_as(self.bbox_proj.weight)
         bbox_embed = self.bbox_proj(bbox_embed)
 
-        class_embed = self.class_embedder({"class": class_label})
-        class_embed = class_embed.squeeze(1)
+        class_embed = self.class_embedder(class_label)
 
         x = torch.cat([bbox_embed, class_embed], dim=-1)
         x = self.second_linear(x)
