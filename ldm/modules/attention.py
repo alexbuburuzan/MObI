@@ -6,6 +6,7 @@ from torch import nn, einsum
 from einops import rearrange, repeat
 
 from ldm.modules.diffusionmodules.util import checkpoint
+from ldm.util import cat_interleave
 
 
 def exists(val):
@@ -206,7 +207,8 @@ class BasicTransformerBlock(nn.Module):
         if self.bbox_cond:
             self.cond_adapter_attn = CrossAttention(query_dim=dim, context_dim=context_dim, heads=n_heads, dim_head=d_head, dropout=dropout)
         if self.multimodal:
-            self.cross_modal_attn = CrossAttention(query_dim=dim, context_dim=dim, heads=n_heads, dim_head=d_head, dropout=dropout)
+            self.cross_modal_attn_camera = CrossAttention(query_dim=dim, context_dim=dim, heads=n_heads, dim_head=d_head, dropout=dropout)
+            self.cross_modal_attn_lidar = CrossAttention(query_dim=dim, context_dim=dim, heads=n_heads, dim_head=d_head, dropout=dropout)
 
         self.norm1 = nn.LayerNorm(dim)
         self.norm2 = nn.LayerNorm(dim)
@@ -215,8 +217,11 @@ class BasicTransformerBlock(nn.Module):
             self.cond_adapter_norm = nn.LayerNorm(dim)
             self.cond_adapter_connector = zero_module(nn.Linear(dim, dim))
         if self.multimodal:
-            self.cross_modal_norm = nn.LayerNorm(dim)
-            self.cross_modal_connector = zero_module(nn.Linear(dim, dim))
+            self.cross_modal_norm_camera = nn.LayerNorm(dim)
+            self.cross_modal_connector_camera = zero_module(nn.Linear(dim, dim))
+            self.cross_modal_norm_lidar = nn.LayerNorm(dim)
+            self.cross_modal_connector_lidar = zero_module(nn.Linear(dim, dim))
+
         self.checkpoint = checkpoint
 
     def forward(self, x, context=None):
@@ -238,15 +243,24 @@ class BasicTransformerBlock(nn.Module):
             ) + x
 
         if self.multimodal:
-            B = x.shape[0]
-            x_other = torch.flip(x.view(B // 2, 2, *x.shape[1:]), dims=[1])
-            x_other = torch.reshape(x_other, (B, *x.shape[1:]))
-            x = self.cross_modal_connector(
-                self.cross_modal_attn(
-                    self.cross_modal_norm(x),
-                    context=x_other
+            x_camera = x[::2]
+            x_lidar = x[1::2]
+
+            x_camera = self.cross_modal_connector_camera(
+                self.cross_modal_attn_camera(
+                    self.cross_modal_norm_camera(x_camera),
+                    context=x_lidar
                 )
-            ) + x
+            ) + x_camera
+
+            x_lidar = self.cross_modal_connector_lidar(
+                self.cross_modal_attn_lidar(
+                    self.cross_modal_norm_lidar(x_lidar),
+                    context=x_camera
+                )
+            ) + x_lidar
+
+            x = cat_interleave([x_camera, x_lidar])
 
         x = self.ff(self.norm3(x)) + x
         return x
