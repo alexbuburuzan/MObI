@@ -70,7 +70,7 @@ class NuScenesDataset(data.Dataset):
         camera_visibility_min=0.7,
         object_area_crop=0.2,
         object_random_crop=True,
-        min_lidar_points=100,
+        min_lidar_points=64,
         rot_every_angle=0,
         rot_test_scene=None, # used for rotation test
         use_lidar=False,
@@ -82,6 +82,7 @@ class NuScenesDataset(data.Dataset):
         range_object_norm=False,
         range_object_norm_scale=0.75,
         range_int_norm=False,
+        include_erase_boxes=False,
     ) -> None:
         self.state = state
         self.ref_aug = ref_aug
@@ -119,14 +120,17 @@ class NuScenesDataset(data.Dataset):
              (self.objects_meta_all["max_iou_overlap"] <= frustum_iou_max) &
              (self.objects_meta_all["object_class"].isin(object_classes)) &
              (self.objects_meta_all["camera_visibility_mask"] >= camera_visibility_min) &
-             (self.objects_meta_all["num_lidar_points"] >= min_lidar_points)) |
-            (self.objects_meta_all["object_class"] == "empty")
+             (self.objects_meta_all["num_lidar_points"] >= min_lidar_points))
         ]
+        if not include_erase_boxes:
+            self.objects_meta_all = self.objects_meta_all[
+                (self.objects_meta_all["object_class"] != "empty")
+            ]
 
         # Select an object from each class when testing
         if num_samples_per_class is not None and fixed_sampling:
             self.objects_meta = self.objects_meta_all.groupby("object_class").apply(
-                lambda x: x.sample(num_samples_per_class)
+                lambda x: x.sample(num_samples_per_class, replace=True)
             )
         else:
             self.objects_meta = self.objects_meta_all
@@ -155,7 +159,7 @@ class NuScenesDataset(data.Dataset):
         if ref_aug:
             ref_augs += [
                 A.HorizontalFlip(p=0.5),
-                A.Rotate(limit=30),
+                A.Rotate(limit=30, border_mode=0),
                 A.Blur(p=0.5),
                 A.RandomBrightnessContrast(
                     brightness_limit=(-0.3, 0.3), contrast_limit=(-0.3, 0.3), p=0.5),
@@ -223,15 +227,16 @@ class NuScenesDataset(data.Dataset):
             reference_meta = current_object_meta
         elif self.ref_mode == "in-domain-ref":
             reference_meta = self.objects_meta_all[
-                self.objects_meta_all["object_class"] == current_object_meta["object_class"] &
-                self.objects_meta_all["is_raining"] == current_object_meta["is_raining"] &
-                self.objects_meta_all["is_night"] == current_object_meta["is_night"]
+                (self.objects_meta_all["object_class"] == current_object_meta["object_class"]) &
+                (self.objects_meta_all["is_raining"] == current_object_meta["is_raining"]) &
+                (self.objects_meta_all["is_night"] == current_object_meta["is_night"]) &
+                (self.objects_meta_all["track_id"] != current_object_meta["track_id"])
             ].sample(1).iloc[0]
-        elif self.ref_mode = "cross-domain-ref":
+        elif self.ref_mode == "cross-domain-ref":
             reference_meta = self.objects_meta_all[
-                self.objects_meta_all["object_class"] == current_object_meta["object_class"] &
-                (self.objects_meta_all["is_raining"] != current_object_meta["is_raining"] |
-                self.objects_meta_all["is_night"] != current_object_meta["is_night"])
+                (self.objects_meta_all["object_class"] == current_object_meta["object_class"]) & (
+                (self.objects_meta_all["is_raining"] != current_object_meta["is_raining"]) |
+                (self.objects_meta_all["is_night"] != current_object_meta["is_night"]))
             ].sample(1).iloc[0]
         elif self.ref_mode == "track-ref":
             # Sample tracked reference according to a beta distribution given the time difference
@@ -263,21 +268,21 @@ class NuScenesDataset(data.Dataset):
         ref_label = self.object_classes.index(ref_class)
 
         if self.ref_mode == "erase-ref" or current_object_meta["object_class"] == "empty":
-            ref_image = np.zeros((224, 224, 3))
+            ref_image = np.zeros((224, 224, 3), dtype=np.uint8)
             ref_class = "empty"
             ref_label = 0
-        
-        image = Image.open(image_path).convert("RGB")
-        W, H = image.size
-        image_np = np.array(image)
+        else:
+            image = Image.open(image_path).convert("RGB")
+            W, H = image.size
+            image_np = np.array(image)
 
-        bbox_2d = get_2d_bbox(
-            ref_bbox_3d, lidar2image, H, W, self.expand_ref_ratio
-        )
-        x1, y1, x2, y2 = bbox_2d
-        w = np.maximum(x2 - x1 + 1, 1)
-        h = np.maximum(y2 - y1 + 1, 1)
-        ref_image = image_np[y1:y1+h, x1:x1+w]
+            bbox_2d = get_2d_bbox(
+                ref_bbox_3d, lidar2image, H, W, self.expand_ref_ratio
+            )
+            x1, y1, x2, y2 = bbox_2d
+            w = np.maximum(x2 - x1 + 1, 1)
+            h = np.maximum(y2 - y1 + 1, 1)
+            ref_image = image_np[y1:y1+h, x1:x1+w]
 
         ref_image = self.ref_transform(image=ref_image)["image"]
         ref_image = Image.fromarray(ref_image)
@@ -417,11 +422,15 @@ class NuScenesDataset(data.Dataset):
             image_orig = image.clone()
             image_mask_orig = image_mask.clone()
 
-        # Crop and resize
+        if (image_mask == 1).all():
+            # Some erase boxes are not projected properly
+            image_mask = 1 - image_mask
+
         mask_coords = torch.nonzero(1 - image_mask)
         y1, x1 = mask_coords.min(dim=0)[0]
         y2, x2 = mask_coords.max(dim=0)[0]
 
+        # Crop and resize
         area = (1 - image_mask).sum().item() / self.object_area_crop
         crop_H = int(np.sqrt(area))
         crop_W = int(np.sqrt(area))
