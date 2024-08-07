@@ -604,7 +604,7 @@ if __name__ == "__main__":
         "image_logger": {
             "target": "main.ImageLogger",
             "params": {
-                "batch_frequency": 250,
+                "batch_frequency": 200,
                 "max_images": 8,
                 "clamp": False,
                 "log_on_batch_idx": True,
@@ -701,7 +701,6 @@ if __name__ == "__main__":
     # allow checkpointing via USR1
     def melk(*args, **kwargs):
         # run all checkpoint hooks
-        return
         if trainer.global_rank == 0:
             print("Summoning checkpoint.")
             ckpt_path = os.path.join(ckptdir, "last.ckpt")

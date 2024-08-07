@@ -21,9 +21,6 @@ class ClassEmbedder(nn.Module):
         tokenizer = CLIPTokenizer.from_pretrained(class_encoder_version)
         text_model = CLIPTextModel.from_pretrained(class_encoder_version)
 
-        if torch.cuda.is_available():
-            text_model.cuda()
-
         class_texts = ["a " + c if c != "empty" else c for c in classes]
         inputs = tokenizer(class_texts, return_tensors="pt", padding=True, truncation=True)
 
@@ -221,7 +218,7 @@ class BBoxAndClassEmbedder(AbstractEncoder):
             bbox.shape[0], -1).type_as(self.bbox_proj.weight)
         bbox_embed = self.bbox_proj(bbox_embed)
 
-        class_embed = self.class_embedder(class_label)
+        class_embed = self.class_embedder(class_label).to(bbox_embed.device)
 
         x = torch.cat([bbox_embed, class_embed], dim=-1)
         x = self.second_linear(x)

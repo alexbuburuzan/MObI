@@ -138,14 +138,14 @@ def get_inpaint_mask(bbox_corners, transform, H, W, expand_ratio=0.1, use_3d_edi
     return mask
 
 
-def get_range_inpaint_mask(bbox_corners, range_height, range_width, expand_ratio=0.1, crop_left=None):
+def get_range_inpaint_mask(bbox_corners, range_height, range_width, expand_ratio=0.1, crop_left=None, width_crop=None):
     bbox_corners = expand_bbox_corners(bbox_corners, expand_ratio)
     mask = np.zeros((range_height, range_width), dtype=np.uint8)
 
     lidar_converter = LidarConverter()
     coords = lidar_converter.get_range_coords(bbox_corners)
     _, _, _, coords, _, _ = lidar_converter.apply_default_transforms(
-        coords, height=range_height, width=range_width, crop_left=crop_left
+        coords, height=range_height, width=range_width, crop_left=crop_left, width_crop=width_crop
     )
     coords = coords[:, :2]
 

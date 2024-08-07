@@ -50,7 +50,7 @@ model:
     channels: 4
     cond_stage_trainable: true   # Note: different from the one we trained before
     conditioning_key: crossattn
-    monitor: val/median/object_pred_depth_L1_epoch
+    monitor: val/loss_simple_ema
     u_cond_percent: 0.2
     scale_factor: 0.18215
     lidar_scale_factor: 0.18215
@@ -166,7 +166,7 @@ data:
               fixed_sampling: False
               ref_aug: True
               ref_mode: ${ref_mode}
-              include_erase_boxes: True
+              include_erase_boxes: False
               image_height: ${image_height}
               image_width: ${image_width}
               range_height: ${range_height}

@@ -387,6 +387,7 @@ class LidarConverter:
         height=512,
         width=512,
         crop_left=None,
+        width_crop=None,
         random_crop=False,
     ):
         """
@@ -400,6 +401,7 @@ class LidarConverter:
             height: int
             width: int
             crop_left: int, left-side crop from range view
+            width_crop: int, crop window width
             random_crop: bool, whether to perform random cropping
         Returns:
             range_depth: np.array, shape (height, width)
@@ -410,8 +412,9 @@ class LidarConverter:
             range_depth, range_int, mask, bbox_range_coords, n=3
         )
 
-        object_width = bbox_range_coords[:, 0].max() - bbox_range_coords[:, 0].min()
-        width_crop = max(64, min(width, int(2 ** np.ceil(np.log2(object_width * 1.5)))))
+        if width_crop is None:
+            object_width = bbox_range_coords[:, 0].max() - bbox_range_coords[:, 0].min()
+            width_crop = max(64, min(width, int(2 ** np.ceil(np.log2(object_width * 1.5)))))
 
         range_depth, range_int, mask, bbox_range_coords, crop_left = self.bbox_crop(
             bbox_range_coords, range_depth, range_int, mask,

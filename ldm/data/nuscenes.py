@@ -102,6 +102,7 @@ class NuScenesDataset(data.Dataset):
         self.range_int_norm = range_int_norm
         self.num_samples_per_class = num_samples_per_class
         self.fixed_sampling = fixed_sampling
+        self.num_classes = len(object_classes)
 
         # Dimensions
         self.image_height = image_height
@@ -122,10 +123,11 @@ class NuScenesDataset(data.Dataset):
              (self.objects_meta_all["camera_visibility_mask"] >= camera_visibility_min) &
              (self.objects_meta_all["num_lidar_points"] >= min_lidar_points))
         ]
-        if not include_erase_boxes:
+        if not include_erase_boxes and "empty" in object_classes:
             self.objects_meta_all = self.objects_meta_all[
                 (self.objects_meta_all["object_class"] != "empty")
             ]
+            self.num_classes -= 1
 
         # Select an object from each class when testing
         if num_samples_per_class is not None and fixed_sampling:
@@ -138,6 +140,8 @@ class NuScenesDataset(data.Dataset):
 
         self.idx_lists = []
         for object_class in self.object_classes:
+            if object_class == "empty" and not include_erase_boxes:
+                continue
             self.idx_lists.append(
                 self.objects_meta[self.objects_meta['object_class'] == object_class].index.tolist()
             )
@@ -169,8 +173,9 @@ class NuScenesDataset(data.Dataset):
 
     def __getitem__(self, index):
         if self.num_samples_per_class and self.fixed_sampling is False:
-            label = index % len(self.object_classes)
-            index = np.random.choice(self.idx_lists[label])
+            index = np.random.choice(
+                self.idx_lists[index % self.num_classes]
+            )
         object_meta = self.objects_meta.iloc[index]
 
         if self.rot_test_scene is not None:
@@ -220,7 +225,7 @@ class NuScenesDataset(data.Dataset):
     def __len__(self):
         if self.num_samples_per_class is None or self.fixed_sampling:
             return len(self.objects_meta)
-        return len(self.object_classes) * self.num_samples_per_class
+        return self.num_classes * self.num_samples_per_class
     
     def get_reference(self, current_object_meta):
         if self.ref_mode == "id-ref" or self.ref_mode == "erase-ref" or current_object_meta["object_class"] == "empty":
@@ -229,8 +234,7 @@ class NuScenesDataset(data.Dataset):
             reference_meta = self.objects_meta_all[
                 (self.objects_meta_all["object_class"] == current_object_meta["object_class"]) &
                 (self.objects_meta_all["is_raining"] == current_object_meta["is_raining"]) &
-                (self.objects_meta_all["is_night"] == current_object_meta["is_night"]) &
-                (self.objects_meta_all["track_id"] != current_object_meta["track_id"])
+                (self.objects_meta_all["is_night"] == current_object_meta["is_night"])
             ].sample(1).iloc[0]
         elif self.ref_mode == "cross-domain-ref":
             reference_meta = self.objects_meta_all[
@@ -370,7 +374,7 @@ class NuScenesDataset(data.Dataset):
 
         # Mask
         range_mask = get_range_inpaint_mask(
-            bbox_3d, self.range_height, self.range_width, self.expand_mask_ratio, range_shift_left,
+            bbox_3d, self.range_height, self.range_width, self.expand_mask_ratio, range_shift_left, width_crop
         )
         range_mask = range_mask.unsqueeze(0)
         range_instance_mask = torch.tensor(range_instance_mask).float().unsqueeze(0)
