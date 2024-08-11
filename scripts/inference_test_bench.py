@@ -248,6 +248,10 @@ def main():
         action="store_true",
     )
     parser.add_argument(
+        "--copy-paste",
+        action="store_true",
+    )
+    parser.add_argument(
         'overrides',
         nargs=argparse.REMAINDER,
         help='Configuration overrides',
@@ -309,6 +313,9 @@ def main():
     )
 
     metrics = {}
+
+    if opt.copy_paste:
+        opt.ddim_steps = 1
 
     start_code = None
     if opt.fixed_code:
@@ -395,6 +402,14 @@ def main():
                                 file_name = batch["image"]["orig"]["file_name"][i]
                                 left, top, crop_W, crop_H = batch["image"]["orig"]["crop"][i]
 
+                                mask_coords = np.nonzero(1 - mask)
+                                y1, y2 = mask_coords[0].min(), mask_coords[0].max()
+                                x1, x2 = mask_coords[1].min(), mask_coords[1].max()
+
+                                object_ref = un_norm_clip(object_ref, size=(224, 224))
+                                object_ref = object_ref[0].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
+                                object_ref = (object_ref * 255).astype(np.uint8)
+
                                 patch_gt = F.interpolate(patch_gt, (crop_H, crop_W), mode='bilinear')
                                 patch_gt = patch_gt[0].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
                                 patch_gt = (((patch_gt + 1.0) / 2.0) * 255).astype(np.uint8)
@@ -405,18 +420,18 @@ def main():
 
                                 image_pred = np.zeros_like(image)
                                 image_pred[top:top+crop_H, left:left+crop_W] = patch_pred
+                                if opt.copy_paste:
+                                    image_pred[y1:y2, x1:x2, :] = cv2.resize(object_ref, (x2 - x1, y2 - y1))
+                                    mask_convolved = mask
+                                else:
+                                    mask_convolved = cv2.GaussianBlur(mask, (15, 15), 7.0)
+
                                 image = (((image + 1.0) / 2.0) * 255).astype(np.uint8)
-                                mask_convolved = cv2.GaussianBlur(mask, (15, 15), 7.0)
                                 image_recon = mask_convolved[..., None] * image + (1 - mask_convolved[..., None]) * image_pred
 
-                                mask_coords = np.nonzero(1 - mask)
-                                y1, y2 = mask_coords[0].min(), mask_coords[0].max()
-                                x1, x2 = mask_coords[1].min(), mask_coords[1].max()
-                                object_pred = cv2.resize(image_pred[y1:y2, x1:x2, :], (224, 224))
+                                composited_patch_pred = image_recon[top:top+crop_H, left:left+crop_W]
 
-                                object_ref = un_norm_clip(object_ref, size=(224, 224))
-                                object_ref = object_ref[0].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
-                                object_ref = (object_ref * 255).astype(np.uint8)
+                                object_pred = cv2.resize(image_pred[y1:y2, x1:x2, :], (224, 224))
 
                                 # save samples
                                 os.makedirs(os.path.join(sample_path, segment_id_batch[i]), exist_ok=True)
@@ -428,7 +443,7 @@ def main():
                                 cv2.imwrite(os.path.join(camera_path, "object_pred", f"{segment_id_batch[i]}_object_pred_seed{opt.seed}.png"), object_pred)
                                 cv2.imwrite(os.path.join(camera_path, "object_ref", f"{segment_id_batch[i]}_object_ref_seed{opt.seed}.png"), object_ref)
                                 cv2.imwrite(os.path.join(camera_path, "patch_gt", f"{segment_id_batch[i]}_gt_seed{opt.seed}.png"), patch_gt)
-                                cv2.imwrite(os.path.join(camera_path, "patch_pred", f"{segment_id_batch[i]}_pred_seed{opt.seed}.png"), patch_pred)
+                                cv2.imwrite(os.path.join(camera_path, "patch_pred", f"{segment_id_batch[i]}_pred_seed{opt.seed}.png"), composited_patch_pred)
 
                     if model.use_lidar:
                         for i in range(batch_size):
@@ -503,13 +518,13 @@ def main():
                             if not np.isnan(v):
                                 metrics[k].append(v.item())
 
-    df = {"mean" : {}, "median" : {}}
+    df = {"mse" : {}, "median_error" : {}}
     for score_name in metrics:
         metrics[score_name] = np.mean(metrics[score_name])
-        if "mean" in score_name:
-            df["mean"][score_name.split("/")[-1]] = metrics[score_name]
-        elif "median" in score_name:
-            df["median"][score_name.split("/")[-1]] = metrics[score_name]
+        if "mse" in score_name:
+            df["mse"][score_name.split("/")[-1]] = metrics[score_name]
+        elif "median_error" in score_name:
+            df["median_error"][score_name.split("/")[-1]] = metrics[score_name]
 
     df = pd.DataFrame(df)
     df.to_csv(os.path.join(outpath, "metrics.csv"))
