@@ -512,8 +512,6 @@ class LatentDiffusion(DDPM):
             self.init_from_ckpt(ckpt_path, ignore_keys)
             self.restarted_from_ckpt = True
 
-        self.range_l1_metric = nn.L1Loss(reduction='none')
-
     def make_cond_schedule(self, ):
         self.cond_ids = torch.full(size=(self.num_timesteps,), fill_value=self.num_timesteps - 1, dtype=torch.long)
         ids = torch.round(torch.linspace(0, self.num_timesteps - 1, self.num_timesteps_cond)).long()
@@ -1538,12 +1536,12 @@ class LatentDiffusion(DDPM):
             # Compute metrics
             lidar_metrics = {}
             for pred_name,(pred, gt) in {
-                "pred_depth": (sample_depth, input_depth),
+                # "pred_depth": (sample_depth, input_depth),
                 "rec_depth": (rec_depth, input_depth),
-                "pred_int": (sample_int, input_int),
+                # "pred_int": (sample_int, input_int),
                 "rec_int": (rec_int, input_int),
                 }.items():
-                for reduction in ["mean", "median"]:
+                for score_name in ["mse", "median_error"]:
                     B = pred.shape[0]
                     object_scores, mask_scores, full_scores = [], [], []
                     for i in range(B):
@@ -1553,25 +1551,34 @@ class LatentDiffusion(DDPM):
                         mask_ = pool_resize(mask[[i]], new_size, mode="max_pool")
                         gt_ = pool_resize(gt[[i]], new_size)
 
-                        object_dist = self.range_l1_metric(pred_[instance_mask_ == 1], gt_[instance_mask_ == 1]).flatten()
-                        mask_dist = self.range_l1_metric(pred_[mask_ == 1], gt_[mask_ == 1]).flatten()
-                        full_dist = self.range_l1_metric(pred_, gt_).flatten()
 
-                        if reduction == "mean":
-                            object_scores.append(object_dist.mean().item())
-                            mask_scores.append(mask_dist.mean().item())
-                            full_scores.append(full_dist.mean().item())
+                        if score_name == "median_error":
+                            object_scores.append(
+                                torch.abs(pred_[instance_mask_ == 1] - gt_[instance_mask_ == 1]).median().item()
+                            )
+                            mask_scores.append(
+                                torch.abs(pred_[mask_ == 1] - gt_[mask_ == 1]).median().item()
+                            )
+                            full_scores.append(
+                                torch.abs(pred_ - gt_).median().item()
+                            )
                         else:
-                            object_scores.append(object_dist.median().item())
-                            mask_scores.append(mask_dist.median().item())
-                            full_scores.append(full_dist.median().item())
+                            object_scores.append(
+                                (((pred_[instance_mask_ == 1] - gt_[instance_mask_ == 1]) ** 2).mean().item() ** 0.5)
+                            )
+                            mask_scores.append(
+                                (((pred_[mask_ == 1] - gt_[mask_ == 1]) ** 2).mean().item() ** 0.5)
+                            )
+                            full_scores.append(
+                                (((pred_ - gt_) ** 2).mean().item() ** 0.5)
+                            )
 
                         if np.isnan(object_scores[-1]):
                             del object_scores[-1]
 
                     lidar_metrics.update({
-                        f"{reduction}/object_{pred_name}_L1" : np.mean(object_scores),
-                        f"{reduction}/mask_{pred_name}_L1" : np.mean(mask_scores),
+                        f"{score_name}/object_{pred_name}" : np.mean(object_scores),
+                        f"{score_name}/mask_{pred_name}" : np.mean(mask_scores),
                         # f"{reduction}/full_{pred_name}_L1" : np.mean(full_scores),
                     })
 
