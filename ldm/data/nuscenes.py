@@ -151,7 +151,7 @@ class NuScenesDataset(data.Dataset):
             self.objects_meta = pd.concat(
                 [self.objects_meta] * len(angles), ignore_index=True
             )
-            self.objects_meta["bbox_rot_angle"] = np.tile(angles, len(self.objects_meta) // len(angles))
+            self.objects_meta["bbox_rot_angle"] = np.repeat(angles, len(self.objects_meta) // len(angles))
 
         with open(scene_database_path, "rb") as f:
             self.scenes_info = pickle.load(f)
@@ -180,19 +180,18 @@ class NuScenesDataset(data.Dataset):
 
         if self.rot_test_scene is not None:
             scene_info = self.scenes_info[self.rot_test_scene]
-            # always use the front camera when rot_test_scene is provided
-            cam_idx = 0
+            cam_idx = 3
         else:
             scene_info = self.scenes_info[object_meta["scene_token"]]
             cam_idx = object_meta["cam_idx"]
 
         # Reference
-        ref_image, ref_bbox_3d, ref_label, ref_class = self.get_reference(object_meta)
+        ref_image, ref_bbox_3d, ref_label, ref_class = self.get_reference(object_meta, index)
 
         if self.rot_test_scene is None:
             bbox_3d = scene_info["gt_bboxes_3d_corners"][object_meta["scene_obj_idx"]]
         else:
-            bbox_3d = translate_bbox(ref_bbox_3d, [0, 9, -1])
+            bbox_3d = translate_bbox(ref_bbox_3d, [4, -6, -1])
 
         bbox_rot_angle = object_meta.get("bbox_rot_angle", 0)
         bbox_3d = rotate_bbox(bbox_3d, bbox_rot_angle)
@@ -227,7 +226,7 @@ class NuScenesDataset(data.Dataset):
             return len(self.objects_meta)
         return self.num_classes * self.num_samples_per_class
     
-    def get_reference(self, current_object_meta):
+    def get_reference(self, current_object_meta, index):
         if self.ref_mode == "id-ref" or self.ref_mode == "erase-ref" or current_object_meta["object_class"] == "empty":
             reference_meta = current_object_meta
         elif self.ref_mode == "in-domain-ref":
@@ -235,13 +234,13 @@ class NuScenesDataset(data.Dataset):
                 (self.objects_meta_all["object_class"] == current_object_meta["object_class"]) &
                 (self.objects_meta_all["is_raining"] == current_object_meta["is_raining"]) &
                 (self.objects_meta_all["is_night"] == current_object_meta["is_night"])
-            ].sample(1).iloc[0]
+            ].sample(1, random_state=index).iloc[0]
         elif self.ref_mode == "cross-domain-ref":
             reference_meta = self.objects_meta_all[
                 (self.objects_meta_all["object_class"] == current_object_meta["object_class"]) & (
                 (self.objects_meta_all["is_raining"] != current_object_meta["is_raining"]) |
                 (self.objects_meta_all["is_night"] != current_object_meta["is_night"]))
-            ].sample(1).iloc[0]
+            ].sample(1, random_state=index).iloc[0]
         elif self.ref_mode == "track-ref":
             # Sample tracked reference according to a beta distribution given the time difference
             tracked_references = self.objects_meta_all[
