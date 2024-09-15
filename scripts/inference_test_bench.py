@@ -295,6 +295,7 @@ def main():
 
     if opt.rotation_test:
         test_data_config = config.data.params.rotation_test
+        test_data_config["params"]["return_original_image"] = opt.save_samples
         test_dataset = instantiate_from_config(test_data_config) 
     else:
         test_data_config = config.data.params.test
@@ -493,20 +494,20 @@ def main():
                                 # paste object
                                 instance_mask = np.logical_or(pred_instance_mask, gt_instance_mask)
 
-                                range_sample_depth = np.where(
+                                range_depth_final = np.where(
                                     instance_mask,
                                     range_sample_depth[i],
                                     batch["lidar"]["range_depth_orig"][i].cpu().numpy()
                                 )
 
-                                range_sample_int = np.where(
+                                range_int_final = np.where(
                                     instance_mask,
                                     range_sample_int[i],
                                     batch["lidar"]["range_int_orig"][i].cpu().numpy()
                                 )
 
                                 # create edited point cloud
-                                points_coord, points_int = lidar_converter.range2pcd(range_sample_depth, pitch[i], yaw[i], range_sample_int)
+                                points_coord, points_int = lidar_converter.range2pcd(range_depth_final, pitch[i], yaw[i], range_int_final)
                                 pred_points = np.concatenate([points_coord, points_int[:, None]], axis=1)
 
                                 os.makedirs(os.path.join(sample_path, segment_id_batch[i]), exist_ok=True)

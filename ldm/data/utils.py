@@ -362,7 +362,8 @@ def get_camera_vis(
     rec,
     ref_bboxes=None,
 ):
-    ref_bboxes = ref_bboxes.cpu().numpy()
+    if ref_bboxes is not None:
+        ref_bboxes = ref_bboxes.cpu().numpy()
     sample = get_images(sample, transform=un_norm, bboxes=ref_bboxes)
     input = get_images(input, transform=un_norm, bboxes=ref_bboxes)
     inpaint_input = get_images(inpaint_input, transform=un_norm, bboxes=ref_bboxes)
