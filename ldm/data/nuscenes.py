@@ -57,6 +57,7 @@ class NuScenesDataset(data.Dataset):
         expand_ref_ratio=0,
         ref_aug=True,
         prob_use_3d_edit_mask=1,
+        prob_drop_context=0,
         ref_mode="id-ref", # id-ref, track-ref, erase-ref, in-domain-ref, cross-domain-ref
         image_height=512,
         image_width=512,
@@ -90,6 +91,7 @@ class NuScenesDataset(data.Dataset):
         self.expand_mask_ratio = expand_mask_ratio
         self.expand_ref_ratio = expand_ref_ratio
         self.prob_use_3d_edit_mask = prob_use_3d_edit_mask
+        self.prob_drop_context = prob_drop_context
         self.rot_test_scene = rot_test_scene
         self.use_lidar = use_lidar
         self.use_camera = use_camera
@@ -218,6 +220,11 @@ class NuScenesDataset(data.Dataset):
 
             if self.use_camera:
                 data["image"]["cond"]["ref_bbox"][..., 2] = data["lidar"]["cond"]["ref_bbox"][..., 2]
+        
+        if object_meta["object_class"] == "empty" or self.ref_mode == "erase-ref":
+            # dummy box conditioning for erasing
+            if self.use_lidar: data["image"]["cond"]["ref_bbox"] *= 0
+            if self.use_camera: data["lidar"]["cond"]["ref_bbox"] *= 0
 
         return data
     
@@ -381,6 +388,11 @@ class NuScenesDataset(data.Dataset):
         # Inpainted range
         range_data_inpaint = range_data.clone() * range_mask
 
+        # Drop context
+        if random.random() < self.prob_drop_context:
+            range_data_inpaint *= 0
+            range_data = range_data * (1 - range_mask)
+
         data = {
             "range_data": range_data,
             "range_data_inpaint": range_data_inpaint,
@@ -469,6 +481,11 @@ class NuScenesDataset(data.Dataset):
 
         # Inpainted image
         image_inpaint = image.clone() * image_mask
+
+        # Drop context
+        if random.random() < self.prob_drop_context:
+            image_inpaint *= 0
+            image = image * (1 - image_mask)
 
         data = {
             "GT": image,
