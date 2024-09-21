@@ -583,7 +583,7 @@ class LatentDiffusion(DDPM):
             self.cond_stage_model.requires_grad_(False)
             if hasattr(self.cond_stage_model, "bbox_embedder"):
                 self.cond_stage_model.bbox_embedder.requires_grad_(True)
-                self.cond_stage_model.bbox_embedder.class_embedder.requires_grad_(False)
+                # self.cond_stage_model.bbox_embedder.class_embedder.requires_grad_(False)
 
 
     def _get_denoise_row_from_list(self, samples, desc='', force_no_decoder_quantization=False):
@@ -1536,9 +1536,9 @@ class LatentDiffusion(DDPM):
             # Compute metrics
             lidar_metrics = {}
             for pred_name,(pred, gt) in {
-                # "pred_depth": (sample_depth, input_depth),
+                "pred_depth": (sample_depth, input_depth),
                 "rec_depth": (rec_depth, input_depth),
-                # "pred_int": (sample_int, input_int),
+                "pred_int": (sample_int, input_int),
                 "rec_int": (rec_int, input_int),
                 }.items():
                 for score_name in ["mse", "median_error"]:

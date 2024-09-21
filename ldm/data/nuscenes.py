@@ -188,7 +188,7 @@ class NuScenesDataset(data.Dataset):
             cam_idx = object_meta["cam_idx"]
 
         # Reference
-        ref_image, ref_bbox_3d, ref_label, ref_class = self.get_reference(object_meta, index)
+        ref_image, ref_bbox_3d, ref_class = self.get_reference(object_meta, index)
 
         if self.rot_test_scene is None:
             bbox_3d = scene_info["gt_bboxes_3d_corners"][object_meta["scene_obj_idx"]]
@@ -210,13 +210,11 @@ class NuScenesDataset(data.Dataset):
         if self.use_camera:
             data["image"] = self.get_image_data(scene_info, cam_idx, bbox_3d)
             data["image"]["cond"]["ref_image"] = ref_image
-            data["image"]["cond"]["ref_label"] = ref_label
 
         # Lidar
         if self.use_lidar:
             data["lidar"] = self.get_range_data(scene_info, bbox_3d, object_meta["scene_obj_idx"])
             data["lidar"]["cond"]["ref_image"] = ref_image
-            data["lidar"]["cond"]["ref_label"] = ref_label
 
             if self.use_camera:
                 data["image"]["cond"]["ref_bbox"][..., 2] = data["lidar"]["cond"]["ref_bbox"][..., 2]
@@ -275,12 +273,10 @@ class NuScenesDataset(data.Dataset):
 
         ref_bbox_3d = ref_scene_info["gt_bboxes_3d_corners"][ref_obj_idx]
         ref_class = reference_meta["object_class"]
-        ref_label = self.object_classes.index(ref_class)
 
         if self.ref_mode == "erase-ref" or current_object_meta["object_class"] == "empty":
             ref_image = np.zeros((224, 224, 3), dtype=np.uint8)
             ref_class = "empty"
-            ref_label = 0
         else:
             image = Image.open(image_path).convert("RGB")
             W, H = image.size
@@ -298,7 +294,7 @@ class NuScenesDataset(data.Dataset):
         ref_image = Image.fromarray(ref_image)
         ref_image = get_tensor_clip()(ref_image)
 
-        return ref_image, ref_bbox_3d, ref_label, ref_class
+        return ref_image, ref_bbox_3d, ref_class
     
     def get_id_name(self, object_meta):
         id_name = "sample-{}_track-{}_time-{}_{}_{}_rot-{}".format(

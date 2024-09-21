@@ -232,7 +232,7 @@ class BasicTransformerBlock(nn.Module):
             context = context[:, [0]]
  
         x = self.attn1(self.norm1(x)) + x
-        x = self.attn2(self.norm2(x), context=context) + x
+        x = self.attn2(self.norm2(x), context=context[:, [0]]) + x
 
         if self.bbox_cond:
             x = self.cond_adapter_connector(

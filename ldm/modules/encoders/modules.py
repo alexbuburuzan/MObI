@@ -143,7 +143,6 @@ class FrozenCLIPImageEmbedder(AbstractEncoder):
     """Uses the CLIP transformer encoder for text (from Hugging Face)"""
     def __init__(
             self,
-            classes,
             conditions,
             version="openai/clip-vit-large-patch14",
     ) -> None:
@@ -153,11 +152,8 @@ class FrozenCLIPImageEmbedder(AbstractEncoder):
             self.final_ln = LayerNorm(1024)
             self.mapper = Transformer(1, 1024, 5, 1)
         
-        if "ref_bbox" in conditions and "ref_label" in conditions:
-            self.bbox_embedder = BBoxAndClassEmbedder(
-                classes=classes,
-                class_encoder_version=version,
-            )
+        if "ref_bbox" in conditions:
+            self.bbox_embedder = BBoxEmbedder()
         self.freeze()
 
     def freeze(self):
@@ -177,18 +173,15 @@ class FrozenCLIPImageEmbedder(AbstractEncoder):
         ret = {}
         if "ref_image" in cond:
             ret["ref_image_token"] = self(cond["ref_image"])
-        if "ref_bbox" in cond and "ref_label" in cond:
+        if "ref_bbox" in cond:
             ret["ref_bbox_token"] = self.bbox_embedder(
                 cond["ref_bbox"],
-                cond["ref_label"],
             )
         return ret
     
-class BBoxAndClassEmbedder(AbstractEncoder):
+class BBoxEmbedder(AbstractEncoder):
     def __init__(
         self,
-        classes,
-        class_encoder_version="openai/clip-vit-large-patch14",
         embedder_num_freqs=4,
         proj_dims=[768, 512, 512, 768],
     ):
@@ -197,36 +190,28 @@ class BBoxAndClassEmbedder(AbstractEncoder):
             input_dims=3,
             num_freqs=embedder_num_freqs,
         )
-        self.class_embedder = ClassEmbedder(
-            classes=classes,
-            class_encoder_version=class_encoder_version,
-        )
-        text_embedding_dim = self.class_embedder.text_embeddings.shape[-1]
 
         self.bbox_proj = nn.Linear(
             self.fourier_embedder.out_dim * 8, proj_dims[0])
         self.second_linear = nn.Sequential(
-            nn.Linear(proj_dims[0] + text_embedding_dim, proj_dims[1]),
+            nn.Linear(proj_dims[0], proj_dims[1]),
             nn.SiLU(),
             nn.Linear(proj_dims[1], proj_dims[2]),
             nn.SiLU(),
             nn.Linear(proj_dims[2], proj_dims[3]),
         )
         
-    def forward(self, bbox, class_label):
+    def forward(self, bbox):
         bbox_embed = self.fourier_embedder(bbox).reshape(
             bbox.shape[0], -1).type_as(self.bbox_proj.weight)
         bbox_embed = self.bbox_proj(bbox_embed)
 
-        class_embed = self.class_embedder(class_label).to(bbox_embed.device)
-
-        x = torch.cat([bbox_embed, class_embed], dim=-1)
-        x = self.second_linear(x)
+        x = self.second_linear(bbox_embed)
         return x.unsqueeze(1)
     
     def encode(self, cond):
         return {
-            "ref_bbox_token": self(cond["ref_bbox"], cond["ref_label"]),
+            "ref_bbox_token": self(cond["ref_bbox"]),
         }
 
 class Embedder:

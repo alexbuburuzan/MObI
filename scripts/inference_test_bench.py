@@ -451,17 +451,17 @@ def main():
                             if opt.save_visualisations:
                                 pcd_vis = log["lidar_input-pred-rec"][i].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
                                 os.makedirs(os.path.join(lidar_path, "point_clouds"), exist_ok=True)
-                                cv2.imwrite(os.path.join(lidar_path, "point_clouds", segment_id_batch[i] + f'_grid_seed{opt.seed}.png'), pcd_vis)
+                                cv2.imwrite(os.path.join(lidar_path, "point_clouds", segment_id_batch[i] + f'_grid_pc_seed{opt.seed}.png'), pcd_vis)
 
                                 range_depth_vis = log["range_depth_pred"][i].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
                                 range_depth_vis = ((range_depth_vis + 1.0) / 2.0 * 255).astype(np.uint8)
                                 os.makedirs(os.path.join(lidar_path, "range_depth"), exist_ok=True)
-                                cv2.imwrite(os.path.join(lidar_path, "range_depth", segment_id_batch[i] + f'_grid_seed{opt.seed}.png'), range_depth_vis)
+                                cv2.imwrite(os.path.join(lidar_path, "range_depth", segment_id_batch[i] + f'_grid_depth_seed{opt.seed}.png'), range_depth_vis)
 
                                 range_int_vis = log["range_int_pred"][i].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
                                 range_int_vis = ((range_int_vis + 1.0) / 2.0 * 255).astype(np.uint8)
                                 os.makedirs(os.path.join(lidar_path, "range_intensity"), exist_ok=True)
-                                cv2.imwrite(os.path.join(lidar_path, "range_intensity", segment_id_batch[i] + f'_grid_seed{opt.seed}.png'), range_int_vis)
+                                cv2.imwrite(os.path.join(lidar_path, "range_intensity", segment_id_batch[i] + f'_grid_intensity_seed{opt.seed}.png'), range_int_vis)
 
                         if opt.save_samples:
                             pitch = batch['lidar']["range_pitch"].cpu().numpy()
