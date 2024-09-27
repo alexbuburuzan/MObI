@@ -1484,7 +1484,16 @@ class LatentDiffusion(DDPM):
                 ref_bboxes=batch["image"]["cond"]["ref_bbox"],
             )
 
+            sample_no_box, input_no_box, inpaint_input_no_box, reference_no_box, rec_no_box = get_camera_vis(
+                sample=image_sample,
+                input=batch["image"]["GT"],
+                inpaint_input=batch["image"]["inpaint_image"],
+                reference=batch["image"]["cond"]["ref_image"],
+                rec=data["image_rec"],
+            )
+
             log["image_preds"] = torch.cat([input, inpaint_input, reference, sample], dim=-2)
+            log["image_preds_no_box"] = torch.cat([input_no_box, inpaint_input_no_box, reference_no_box, sample_no_box], dim=-2)
             log["image_input-rec"] = torch.cat([input, rec], dim=-2)
 
             if return_sample:

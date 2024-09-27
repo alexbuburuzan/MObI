@@ -388,11 +388,14 @@ def main():
 
                     if model.use_camera:
                         pred_grid = log["image_preds"].cpu().numpy()
+                        pred_grid_no_box = log["image_preds_no_box"].cpu().numpy()
                         for i in range(batch_size):
                             if opt.save_visualisations:
                                 grid_vis = pred_grid[i].transpose(1, 2, 0)[..., ::-1]
+                                grid_vis_no_box = pred_grid_no_box[i].transpose(1, 2, 0)[..., ::-1]
+                                vis = np.concatenate([grid_vis, grid_vis_no_box], axis=1)
                                 os.makedirs(os.path.join(camera_path, "grid"), exist_ok=True)
-                                cv2.imwrite(os.path.join(camera_path, "grid", segment_id_batch[i] + f'_grid_seed{opt.seed}.png'), grid_vis)
+                                cv2.imwrite(os.path.join(camera_path, "grid", segment_id_batch[i] + f'_grid_seed{opt.seed}.png'), vis)
 
                             if opt.save_samples:
                                 patch_pred = log["image_sample"][[i]]
