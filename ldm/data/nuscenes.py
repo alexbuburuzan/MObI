@@ -84,6 +84,7 @@ class NuScenesDataset(data.Dataset):
         range_object_norm_scale=0.75,
         range_int_norm=False,
         include_erase_boxes=False,
+        specific_object=None,
     ) -> None:
         self.state = state
         self.ref_aug = ref_aug
@@ -131,14 +132,27 @@ class NuScenesDataset(data.Dataset):
             ]
             self.num_classes -= 1
 
-        # Select an object from each class when testing
-        if num_samples_per_class is not None and fixed_sampling:
-            self.objects_meta = self.objects_meta_all.groupby("object_class").apply(
-                lambda x: x.sample(num_samples_per_class, replace=True)
-            )
+        if specific_object is None:
+            # Select an object from each class when testing
+            if num_samples_per_class is not None and fixed_sampling:
+                self.objects_meta = self.objects_meta_all.groupby("object_class").apply(
+                    lambda x: x.sample(num_samples_per_class, replace=True)
+                )
+            else:
+                self.objects_meta = self.objects_meta_all
+            self.objects_meta = self.objects_meta.reset_index(drop=True)
         else:
-            self.objects_meta = self.objects_meta_all
-        self.objects_meta = self.objects_meta.reset_index(drop=True)
+            # sample-d9e3f6344b764bf383485c83fe272f92_track-ee8e111f86fe4e8abe620e5abb19e4a7_time-1538984834447585_pedestrian_id-ref_rot-0_grid_seed42
+            name_parts = specific_object.split("_")
+            scene_token = name_parts[0].split("-")[1]
+            track_id = name_parts[1].split("-")[1]
+            timestamp = int(name_parts[2].split("-")[1])
+
+            self.objects_meta = self.objects_meta_all[
+                ((self.objects_meta_all["track_id"] == track_id) &
+                 (self.objects_meta_all["scene_token"] == scene_token) &
+                 (self.objects_meta_all["timestamp"] == timestamp))
+            ]
 
         self.idx_lists = []
         for object_class in self.object_classes:
@@ -193,7 +207,7 @@ class NuScenesDataset(data.Dataset):
         if self.rot_test_scene is None:
             bbox_3d = scene_info["gt_bboxes_3d_corners"][object_meta["scene_obj_idx"]]
         else:
-            bbox_3d = translate_bbox(ref_bbox_3d, [4, -6, -1])
+            bbox_3d = translate_bbox(ref_bbox_3d, [3, -10, -1.5])
 
         bbox_rot_angle = object_meta.get("bbox_rot_angle", 0)
         bbox_3d = rotate_bbox(bbox_3d, bbox_rot_angle)
