@@ -18,7 +18,8 @@ class EvalBox(abc.ABC):
                  rotation: Tuple[float, float, float, float] = (0, 0, 0, 0),
                  velocity: Tuple[float, float] = (0, 0),
                  ego_translation: Tuple[float, float, float] = (0, 0, 0),  # Translation to ego vehicle in meters.
-                 num_pts: int = -1):  # Nbr. LIDAR or RADAR inside the box. Only for gt boxes.
+                 num_pts: int = -1,  # Nbr. LIDAR or RADAR inside the box. Only for gt boxes.
+                 tracking_id: str = ""):
 
         # Assert data for shape and NaNs.
         assert type(sample_token) == str, 'Error: sample_token must be a string!'
@@ -49,6 +50,7 @@ class EvalBox(abc.ABC):
         self.velocity = velocity
         self.ego_translation = ego_translation
         self.num_pts = num_pts
+        self.tracking_id = tracking_id
 
     @property
     def ego_dist(self) -> float:

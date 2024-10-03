@@ -91,7 +91,9 @@ class DetectionMetricData(MetricData):
                  vel_err: np.array,
                  scale_err: np.array,
                  orient_err: np.array,
-                 attr_err: np.array):
+                 attr_err: np.array,
+                 ins_lst: np.array = None,
+                 ins_tpr: float = None):
 
         # Assert lengths.
         assert len(recall) == self.nelem
@@ -325,9 +327,10 @@ class DetectionBox(EvalBox):
                  num_pts: int = -1,  # Nbr. LIDAR or RADAR inside the box. Only for gt boxes.
                  detection_name: str = 'car',  # The class name used in the detection challenge.
                  detection_score: float = -1.0,  # GT samples do not have a score.
-                 attribute_name: str = ''):  # Box attribute. Each box can have at most 1 attribute.
+                 attribute_name: str = '',  # Box attribute. Each box can have at most 1 attribute.
+                 tracking_id: str = ''):  # Tracking id for the box.
 
-        super().__init__(sample_token, translation, size, rotation, velocity, ego_translation, num_pts)
+        super().__init__(sample_token, translation, size, rotation, velocity, ego_translation, num_pts, tracking_id)
 
         assert detection_name is not None, 'Error: detection_name cannot be empty!'
         assert detection_name in DETECTION_NAMES, 'Error: Unknown detection_name %s' % detection_name

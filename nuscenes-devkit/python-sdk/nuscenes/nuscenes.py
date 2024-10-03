@@ -8,7 +8,7 @@ import os.path as osp
 import sys
 import time
 from datetime import datetime
-from typing import Tuple, List, Iterable
+from typing import Optional, Tuple, List, Iterable
 
 import cv2
 import matplotlib.pyplot as plt
@@ -45,7 +45,8 @@ class NuScenes:
                  version: str = 'v1.0-mini',
                  dataroot: str = '/data/sets/nuscenes',
                  verbose: bool = True,
-                 map_resolution: float = 0.1):
+                 map_resolution: float = 0.1,
+                 edited_samples_path: Optional[str] = None):
         """
         Loads database and creates reverse indexes and shortcuts.
         :param version: Version to load (e.g. "v1.0", ...).
@@ -122,6 +123,29 @@ class NuScenes:
 
         # Make reverse indexes for common lookups.
         self.__make_reverse_index__(verbose)
+
+        # If set, load the edited samples into the sample_data table
+        if edited_samples_path is not None:
+            # Find all edited images
+            edited_samples = {}
+            for _, _, files in os.walk(osp.join(self.dataroot, edited_samples_path)):
+                for file in files:
+                    if file.endswith(".json"):  # we skip the json files
+                        continue
+                    fname = file
+                    if file.endswith('.pcd.bin.npy'):  # TODO: Fix?
+                        fname = file.replace('.pcd.bin.npy', '.pcd.bin')
+                    edited_samples[fname] = osp.join(edited_samples_path, file)
+
+            # Replace the original image paths with the edited image paths
+            count = 0
+            for sample in self.sample_data:
+                original_path = sample["filename"]
+                filename = osp.basename(original_path)
+                if filename in edited_samples:
+                    sample["filename"] = edited_samples[filename]
+                    count += 1
+            assert count == len(edited_samples), "Not all edited images were found in the sample_data table"
 
         # Initialize NuScenesExplorer class.
         self.explorer = NuScenesExplorer(self)

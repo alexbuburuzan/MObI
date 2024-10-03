@@ -59,7 +59,8 @@ class DetectionEval:
                  result_path: str,
                  eval_set: str,
                  output_dir: str = None,
-                 verbose: bool = True):
+                 verbose: bool = True,
+                 edited_objects_list: str = None) -> None:
         """
         Initialize a DetectionEval object.
         :param nusc: A NuScenes object.
@@ -103,6 +104,13 @@ class DetectionEval:
         assert set(self.pred_boxes.sample_tokens) == set(self.gt_boxes.sample_tokens), \
             "Samples in split doesn't match samples in predictions."
 
+        # Load list of edited boxes if provided
+        if edited_objects_list is not None:
+            with open(edited_objects_list, 'r') as f:
+                self.inserted_boxes = json.load(f)
+        else:
+            self.inserted_boxes = None
+
         # Add center distances.
         self.pred_boxes = add_center_dist(nusc, self.pred_boxes)
         self.gt_boxes = add_center_dist(nusc, self.gt_boxes)
@@ -132,7 +140,7 @@ class DetectionEval:
         metric_data_list = DetectionMetricDataList()
         for class_name in self.cfg.class_names:
             for dist_th in self.cfg.dist_ths:
-                md = accumulate(self.gt_boxes, self.pred_boxes, class_name, self.cfg.dist_fcn_callable, dist_th)
+                md = accumulate(self.gt_boxes, self.pred_boxes, class_name, self.cfg.dist_fcn_callable, dist_th, inserted_boxes=self.inserted_boxes)
                 metric_data_list.set(class_name, dist_th, md)
 
         # -----------------------------------

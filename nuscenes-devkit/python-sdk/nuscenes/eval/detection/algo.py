@@ -1,7 +1,7 @@
 # nuScenes dev-kit.
 # Code written by Oscar Beijbom, 2019.
 
-from typing import Callable
+from typing import Callable, Dict, Optional, Set
 
 import numpy as np
 
@@ -15,6 +15,7 @@ def accumulate(gt_boxes: EvalBoxes,
                class_name: str,
                dist_fcn: Callable,
                dist_th: float,
+               inserted_boxes: Optional[Dict[str, Set[str]]] = None,
                verbose: bool = False) -> DetectionMetricData:
     """
     Average Precision over predefined different recall thresholds for a single distance threshold.
@@ -24,15 +25,21 @@ def accumulate(gt_boxes: EvalBoxes,
     :param class_name: Class to compute AP on.
     :param dist_fcn: Distance function used to match detections and ground truths.
     :param dist_th: Distance threshold for a match.
+    :param inserted_boxes: Dictionary {sample_token: {tracking_id}} of inserted boxes. If None, no inserted boxes.
     :param verbose: If true, print debug messages.
     :return: (average_prec, metrics). The average precision value and raw data for a number of metrics.
     """
+
     # ---------------------------------------------
     # Organize input and initialize accumulators.
     # ---------------------------------------------
 
-    # Count the positives.
-    npos = len([1 for gt_box in gt_boxes.all if gt_box.detection_name == class_name])
+    # Count the positives and inserted boxes:
+    all_boxes = [gt_box for gt_box in gt_boxes.all if gt_box.detection_name == class_name]
+    if inserted_boxes is not None:
+        all_boxes = [gt_box for gt_box in all_boxes if gt_box.tracking_id in inserted_boxes[gt_box.sample_token]]
+    npos = len(all_boxes)
+
     if verbose:
         print("Found {} GT of class {} out of {} total across {} samples.".
               format(npos, class_name, len(gt_boxes.all), len(gt_boxes.sample_tokens)))
@@ -109,7 +116,7 @@ def accumulate(gt_boxes: EvalBoxes,
             match_data['attr_err'].append(1 - attr_acc(gt_box_match, pred_box))
             match_data['conf'].append(pred_box.detection_score)
 
-        else:
+        elif inserted_boxes is None:
             # No match. Mark this as a false positive.
             tp.append(0)
             fp.append(1)
@@ -129,7 +136,7 @@ def accumulate(gt_boxes: EvalBoxes,
     conf = np.array(conf)
 
     # Calculate precision and recall.
-    prec = tp / (fp + tp)
+    prec = tp / (fp + tp) if inserted_boxes is None else np.zeros_like(tp)
     rec = tp / float(npos)
 
     rec_interp = np.linspace(0, 1, DetectionMetricData.nelem)  # 101 steps, from 0% to 100% recall.
@@ -162,7 +169,8 @@ def accumulate(gt_boxes: EvalBoxes,
                                vel_err=match_data['vel_err'],
                                scale_err=match_data['scale_err'],
                                orient_err=match_data['orient_err'],
-                               attr_err=match_data['attr_err'])
+                               attr_err=match_data['attr_err'], 
+                               )
 
 
 def calc_ap(md: DetectionMetricData, min_recall: float, min_precision: float) -> float:
