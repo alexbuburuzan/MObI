@@ -292,6 +292,7 @@ def main():
     sample_path = os.path.join(outpath, "samples")
     os.makedirs(camera_path, exist_ok=True)
     os.makedirs(lidar_path, exist_ok=True)
+    os.makedirs(sample_path, exist_ok=True)
 
     if opt.rotation_test:
         test_data_config = config.data.params.rotation_test
@@ -310,7 +311,7 @@ def main():
         pin_memory=True, 
         shuffle=False,
         #sampler=train_sampler, 
-        drop_last=True
+        drop_last=False
     )
 
     metrics = {}
@@ -385,11 +386,12 @@ def main():
 
                     h_camera, h_lidar = model.decode_sample(samples, data.get("z_lidar"))
                     log, lidar_metrics = model.log_data(batch, data, h_camera, h_lidar, log_metrics=False, return_sample=opt.save_samples, split="test")
+                    num_samples = len(batch["bbox_3d"])
 
                     if model.use_camera:
                         pred_grid = log["image_preds"].cpu().numpy()
                         pred_grid_no_box = log["image_preds_no_box"].cpu().numpy()
-                        for i in range(batch_size):
+                        for i in range(num_samples):
                             if opt.save_visualisations:
                                 grid_vis = pred_grid[i].transpose(1, 2, 0)[..., ::-1]
                                 grid_vis_no_box = pred_grid_no_box[i].transpose(1, 2, 0)[..., ::-1]
@@ -438,8 +440,7 @@ def main():
                                 object_pred = cv2.resize(image_pred[y1:y2, x1:x2, :], (224, 224))
 
                                 # save samples
-                                os.makedirs(os.path.join(sample_path, segment_id_batch[i]), exist_ok=True)
-                                cv2.imwrite(os.path.join(sample_path, segment_id_batch[i], f'{file_name}_seed{opt.seed}.png'), image_recon)
+                                cv2.imwrite(os.path.join(sample_path, file_name), image_recon)
 
                                 for file in "object_pred", "object_ref", "patch_gt", "patch_pred":
                                     os.makedirs(os.path.join(camera_path, file), exist_ok=True)
@@ -450,7 +451,7 @@ def main():
                                 cv2.imwrite(os.path.join(camera_path, "patch_pred", f"{segment_id_batch[i]}_pred_seed{opt.seed}.png"), composited_patch_pred)
 
                     if model.use_lidar:
-                        for i in range(batch_size):
+                        for i in range(num_samples):
                             if opt.save_visualisations:
                                 pcd_vis = log["lidar_input-pred-rec"][i].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
                                 os.makedirs(os.path.join(lidar_path, "point_clouds"), exist_ok=True)
@@ -480,9 +481,10 @@ def main():
                             )
 
                             lidar_converter = LidarConverter()
-                            for i in range(batch_size):
+                            for i in range(num_samples):
                                 bbox_3d = batch["bbox_3d"][[i]].cpu().numpy()
                                 gt_instance_mask = batch["lidar"]["range_instance_mask_orig"][i].cpu().numpy()
+                                file_name = batch["lidar"]["file_name"][i]
 
                                 # create instance mask for predicted object
                                 pred_instance_mask = np.zeros(np.prod(gt_instance_mask.shape))
@@ -513,8 +515,7 @@ def main():
                                 points_coord, points_int = lidar_converter.range2pcd(range_depth_final, pitch[i], yaw[i], range_int_final)
                                 pred_points = np.concatenate([points_coord, points_int[:, None]], axis=1)
 
-                                os.makedirs(os.path.join(sample_path, segment_id_batch[i]), exist_ok=True)
-                                np.save(os.path.join(sample_path, segment_id_batch[i], f'object_pc_seed{opt.seed}.npy'), pred_points)
+                                np.save(os.path.join(sample_path, file_name), pred_points)
 
                         for k, v in lidar_metrics.items():
                             if k not in metrics:
