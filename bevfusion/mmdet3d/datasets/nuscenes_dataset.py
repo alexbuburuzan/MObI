@@ -302,6 +302,7 @@ class NuScenesDataset(Custom3DDataset):
             mask = info["num_lidar_pts"] > 0
         gt_bboxes_3d = info["gt_boxes"][mask]
         gt_names_3d = info["gt_names"][mask]
+        gt_name_descriptions_3d = info["gt_name_descriptions"][mask]
         ann_tokens = info["ann_tokens"][mask]
         gt_labels_3d = []
         for cat in gt_names_3d:
@@ -328,6 +329,7 @@ class NuScenesDataset(Custom3DDataset):
             gt_bboxes_3d=gt_bboxes_3d,
             gt_labels_3d=gt_labels_3d,
             gt_names=gt_names_3d,
+            gt_name_descriptions=gt_name_descriptions_3d,
             ann_tokens=ann_tokens,
         )
         return anns_results

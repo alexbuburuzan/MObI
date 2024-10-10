@@ -99,6 +99,7 @@ def process_sample(j, database_save_path):
     points = example["points"].tensor.numpy()
     gt_boxes_3d = annos["gt_bboxes_3d"].tensor.numpy()
     names = annos["gt_names"]
+    name_descriptions = annos["gt_name_descriptions"]
     num_obj = gt_boxes_3d.shape[0]
 
     city = example["location"].split("-")[0]
@@ -128,6 +129,7 @@ def process_sample(j, database_save_path):
         "camera_intrinsics": example["camera_intrinsics"],
         "cam_types": example["cam_types"],
         "image_paths": example["image_paths"],
+        "lidar_path": example["lidar_path"],
     }
     range_depth, range_intensity, _, range_pitch, range_yaw = lidar_converter.pcd2range(points[:, :3].astype(np.float32), label=points[:, 3])
 
@@ -226,6 +228,7 @@ def process_sample(j, database_save_path):
         for i in range(len(object_img_patches)):
             obj = org_indices[i]
             track_id = annos["ann_tokens"][obj]
+            dist = np.sqrt(bboxes_3d[obj,:,0]**2 + bboxes_3d[obj,:,1]**2)
 
             db_object_infos.append({
                 "track_id": track_id,
@@ -235,6 +238,7 @@ def process_sample(j, database_save_path):
                 "cam_idx": _idx,
                 "scene_obj_idx": obj,
                 "object_class": names[obj],
+                "name_description": name_descriptions[obj],
                 "camera_visibility_2d_box": visibility_percentage[i],
                 "num_mask_pixels": (object_3d_masks[i][..., 0] // 255).sum(),
                 "max_iou_overlap": max_iou_overlap[i],
@@ -244,7 +248,9 @@ def process_sample(j, database_save_path):
                 "city": city,
                 "is_raining": is_raining,
                 "is_night": is_night,
-                "is_erase_box": False
+                "is_erase_box": False,
+                "max_distance": dist.max(),
+                "min_distance": dist.min()
             })
 
     return scene_info, db_object_infos
@@ -277,7 +283,8 @@ def create_groundtruth_database(
         scene_info_save_path=None,
         split="train",
         workers=1,
-        max_sweeps=0
+        max_sweeps=0,
+        version="v1.0",
     ):
     """Given the raw data, generate the ground truth database.
 
@@ -365,6 +372,8 @@ def create_groundtruth_database(
 
     # Create data for supervising object removal
     num_scenes = 10000 if split == "train" else 2000
+    if "mini" in version:
+        num_scenes = num_scenes / 100
     erase_boxes = []
     while len(erase_boxes) < num_scenes:
         object_idx = np.random.randint(0, len(all_db_infos))
@@ -413,3 +422,5 @@ def create_groundtruth_database(
 
     with open(scene_info_save_path, "wb") as f:
         pickle.dump(all_scene_infos, f)
+
+    print(f"{split} PBE database created!")

@@ -1,3 +1,5 @@
+import os
+import json
 import warnings
 
 import pickle
@@ -7,6 +9,7 @@ import pandas as pd
 from PIL import Image
 import torch
 from scipy.stats import beta
+from typing import Dict
 
 import torchvision.transforms as T
 import torch.utils.data as data
@@ -46,6 +49,7 @@ def get_tensor_clip(normalize=True, toTensor=True):
                                                 (0.26862954, 0.26130258, 0.27577711))]
     return torchvision.transforms.Compose(transform_list)
 
+
 class NuScenesDataset(data.Dataset):
     def __init__(
         self,
@@ -80,10 +84,11 @@ class NuScenesDataset(data.Dataset):
         num_samples_per_class=None,
         fixed_sampling=True,
         return_original_image=False,
-        range_object_norm=False,
+        range_object_norm=True,
         range_object_norm_scale=0.75,
         range_int_norm=False,
         include_erase_boxes=False,
+        object_meta_dump_path: str = None,
         specific_object=None,
     ) -> None:
         self.state = state
@@ -124,7 +129,9 @@ class NuScenesDataset(data.Dataset):
              (self.objects_meta_all["max_iou_overlap"] <= frustum_iou_max) &
              (self.objects_meta_all["object_class"].isin(object_classes)) &
              (self.objects_meta_all["camera_visibility_mask"] >= camera_visibility_min) &
-             (self.objects_meta_all["num_lidar_points"] >= min_lidar_points))
+             (self.objects_meta_all["num_lidar_points"] >= min_lidar_points) &
+             (self.objects_meta_all["max_distance"] < 54) &
+             (self.objects_meta_all["min_distance"] > 1.4))
         ]
         if not include_erase_boxes and "empty" in object_classes:
             self.objects_meta_all = self.objects_meta_all[
@@ -133,13 +140,28 @@ class NuScenesDataset(data.Dataset):
             self.num_classes -= 1
 
         if specific_object is None:
-            # Select an object from each class when testing
-            if num_samples_per_class is not None and fixed_sampling:
-                self.objects_meta = self.objects_meta_all.groupby("object_class").apply(
-                    lambda x: x.sample(num_samples_per_class, replace=True)
-                )
+            if object_meta_dump_path is None:
+                # Select an object from each class when testing
+                if num_samples_per_class is not None and fixed_sampling:
+                    self.objects_meta = self.objects_meta_all.groupby("object_class").apply(
+                        lambda x: x.sample(num_samples_per_class, replace=True)
+                    )
+                else:
+                    self.objects_meta = self.objects_meta_all
             else:
-                self.objects_meta = self.objects_meta_all
+                self.objects_meta = self.objects_meta_all.groupby("scene_token").apply(
+                    lambda x: x.sample(n=1)
+                )
+
+                object_meta_dump = {
+                    row["scene_token"]: row["track_id"]
+                    for _, row in self.objects_meta.iterrows()
+                }
+
+                os.makedirs(os.path.dirname(object_meta_dump_path), exist_ok=True)
+                with open(object_meta_dump_path, "w") as f:
+                    json.dump(object_meta_dump, f)
+
             self.objects_meta = self.objects_meta.reset_index(drop=True)
         else:
             # sample-d9e3f6344b764bf383485c83fe272f92_track-ee8e111f86fe4e8abe620e5abb19e4a7_time-1538984834447585_pedestrian_id-ref_rot-0_grid_seed42
@@ -419,7 +441,8 @@ class NuScenesDataset(data.Dataset):
             "max_depth_obj": max_depth_obj,
             "cond": {
                 "ref_bbox": bbox_range_coords,
-            }
+            },
+            "file_name": scene_info["lidar_path"].split("/")[-1],
         }
 
         return data
@@ -428,6 +451,7 @@ class NuScenesDataset(data.Dataset):
         lidar2image = scene_info["lidar2image_transforms"][cam_idx]
         lidar2camera = scene_info["lidar2camera_transforms"][cam_idx]
         image_path = scene_info["image_paths"][cam_idx]
+        cam_type = scene_info["cam_types"][cam_idx]
 
         # Image
         image = Image.open(image_path).convert("RGB")
@@ -511,7 +535,8 @@ class NuScenesDataset(data.Dataset):
                 "crop": torch.tensor([left, top, crop_W, crop_H]),
                 "image": image_orig,
                 "mask": image_mask_orig,
-                "file_name": image_path.split("/")[-1].split(".")[0],
+                "file_name": image_path.split("/")[-1],
+                "cam_type": cam_type,
             }
 
         return data

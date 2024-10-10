@@ -189,6 +189,7 @@ def _fill_trainval_infos(nusc, train_scenes, val_scenes, test=False, max_sweeps=
         description = nusc.get("scene", sample["scene_token"])["description"]
 
         lidar_path, boxes, _ = nusc.get_sample_data(lidar_token)
+        cat_token_to_name = {cat['token']: cat['name'] for cat in nusc.category}
 
         mmcv.check_file_exist(lidar_path)
 
@@ -275,6 +276,10 @@ def _fill_trainval_infos(nusc, train_scenes, val_scenes, test=False, max_sweeps=
                 if names[i] in NuScenesDataset.NameMapping:
                     names[i] = NuScenesDataset.NameMapping[names[i]]
             names = np.array(names)
+            instances = [nusc.get("instance", ann["instance_token"]) for ann in annotations]
+            name_descriptions = np.array([
+                cat_token_to_name[instance["category_token"]] for instance in instances
+            ])
             # we need to convert rot to SECOND format.
             gt_boxes = np.concatenate([locs, dims, -rots - np.pi / 2], axis=1)
             assert len(gt_boxes) == len(
@@ -282,6 +287,7 @@ def _fill_trainval_infos(nusc, train_scenes, val_scenes, test=False, max_sweeps=
             ), f"{len(gt_boxes)}, {len(annotations)}"
             info["gt_boxes"] = gt_boxes
             info["gt_names"] = names
+            info["gt_name_descriptions"] = name_descriptions
             info["gt_velocity"] = velocity.reshape(-1, 2)
             info["num_lidar_pts"] = np.array([a["num_lidar_pts"] for a in annotations])
             info["num_radar_pts"] = np.array([a["num_radar_pts"] for a in annotations])

@@ -49,7 +49,13 @@ def box_collision_test(boxes, qboxes, clockwise=True):
     qboxes_standup = box_np_ops.corner_to_standup_nd_jit(qboxes)
     for i in range(N):
         for j in range(K):
-            if (boxes_standup[i, 0] == boxes_standup[j, 0]).all():
+            # Ensure numba works
+            if (
+                (boxes_standup[i, 0] == boxes_standup[j, 0]) &
+                (boxes_standup[i, 1] == boxes_standup[j, 1]) &
+                (boxes_standup[i, 2] == boxes_standup[j, 2]) &
+                (boxes_standup[i, 3] == boxes_standup[j, 3])
+            ):
                 # Overlap of identical boxes
                 ret[i, j] = ret[j, i] = True
                 continue

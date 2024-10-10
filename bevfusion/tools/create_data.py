@@ -76,6 +76,7 @@ def nuscenes_data_prep(root_path,
         split='train',
         workers=workers,
         max_sweeps=max_sweeps,
+        version=version,
     )
     create_groundtruth_database(
         dataset_name,
@@ -85,6 +86,7 @@ def nuscenes_data_prep(root_path,
         split='val',
         workers=workers,
         max_sweeps=max_sweeps,
+        version=version,
     )
 
 
