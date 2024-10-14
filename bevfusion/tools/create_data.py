@@ -5,7 +5,8 @@ from tools.data_converter import indoor_converter as indoor
 from tools.data_converter import kitti_converter as kitti
 # from tools.data_converter import lyft_converter as lyft_converter
 from tools.data_converter import nuscenes_converter as nuscenes_converter
-from tools.data_converter.create_pbe_database import create_groundtruth_database
+from tools.data_converter.create_gt_database import create_groundtruth_database
+from tools.data_converter.create_pbe_database import create_groundtruth_database as create_pbe_database
 
 
 def kitti_data_prep(root_path, info_prefix, version, out_dir):
@@ -37,6 +38,7 @@ def nuscenes_data_prep(root_path,
                        version,
                        dataset_name,
                        out_dir,
+                       pbe_database,
                        workers,
                        max_sweeps=10):
     """Prepare data related to nuScenes dataset.
@@ -50,6 +52,7 @@ def nuscenes_data_prep(root_path,
         version (str): Dataset version.
         dataset_name (str): The dataset class name.
         out_dir (str): Output directory of the groundtruth database info.
+        pb_database (bool): Whether to generate the pbe database.
         max_sweeps (int): Number of input consecutive frames. Default: 10
     """
     if version == 'v1.0-test':
@@ -68,26 +71,40 @@ def nuscenes_data_prep(root_path,
     nuscenes_converter.export_2d_annotation(
         root_path, info_val_path, version=version
     )
-    create_groundtruth_database(
-        dataset_name,
-        root_path,
-        info_prefix,
-        f'{out_dir}/{info_prefix}_infos_train.pkl',
-        split='train',
-        workers=workers,
-        max_sweeps=max_sweeps,
-        version=version,
-    )
-    create_groundtruth_database(
-        dataset_name,
-        root_path,
-        info_prefix,
-        f'{out_dir}/{info_prefix}_infos_val.pkl',
-        split='val',
-        workers=workers,
-        max_sweeps=max_sweeps,
-        version=version,
-    )
+    if not pbe_database:
+        create_groundtruth_database(
+            dataset_name,
+            root_path,
+            info_prefix,
+            f'{out_dir}/{info_prefix}_infos_train.pkl',
+            split='train',
+        )
+        create_groundtruth_database(
+            dataset_name,
+            root_path,
+            info_prefix,
+            f'{out_dir}/{info_prefix}_infos_val.pkl',
+            split='val',
+        )
+    else:
+        create_pbe_database(
+            dataset_name,
+            root_path,
+            info_prefix,
+            f'{out_dir}/{info_prefix}_infos_train.pkl',
+            split='train',
+            workers=workers,
+            max_sweeps=max_sweeps,
+        )
+        create_pbe_database(
+            dataset_name,
+            root_path,
+            info_prefix,
+            f'{out_dir}/{info_prefix}_infos_val.pkl',
+            split='val',
+            workers=workers,
+            max_sweeps=max_sweeps,
+        )
 
 
 def lyft_data_prep(root_path,
@@ -227,6 +244,9 @@ parser.add_argument(
     help='name of info pkl')
 parser.add_argument('--extra-tag', type=str, default='kitti')
 parser.add_argument(
+    "--pbe-database", action="store_true", help="whether to generate pbe database"
+)
+parser.add_argument(
     '--workers', type=int, default=4, help='number of threads to be used')
 args = parser.parse_args()
 
@@ -245,6 +265,7 @@ if __name__ == '__main__':
             version=train_version,
             dataset_name='NuScenesDataset',
             out_dir=args.out_dir,
+            pbe_database=args.pbe_database,
             workers=args.workers,
             max_sweeps=args.max_sweeps)
         test_version = f'{args.version}-test'
@@ -254,6 +275,7 @@ if __name__ == '__main__':
             version=test_version,
             dataset_name='NuScenesDataset',
             out_dir=args.out_dir,
+            pbe_database=args.pbe_database,
             workers=args.workers,
             max_sweeps=args.max_sweeps)
     elif args.dataset == 'nuscenes' and args.version == 'v1.0-mini':
@@ -264,6 +286,7 @@ if __name__ == '__main__':
             version=train_version,
             dataset_name='NuScenesDataset',
             out_dir=args.out_dir,
+            pbe_database=args.pbe_database,
             workers=args.workers,
             max_sweeps=args.max_sweeps)
     # elif args.dataset == 'lyft':

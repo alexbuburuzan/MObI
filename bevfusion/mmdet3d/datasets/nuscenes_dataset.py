@@ -413,6 +413,8 @@ class NuScenesDataset(Custom3DDataset):
         logger=None,
         metric="bbox",
         result_name="pts_bbox",
+        edited_samples_path=None,
+        edited_objects_list=None,
     ):
         """Evaluation for a single model in nuScenes protocol.
 
@@ -431,7 +433,12 @@ class NuScenesDataset(Custom3DDataset):
         from nuscenes.eval.detection.evaluate import DetectionEval
 
         output_dir = osp.join(*osp.split(result_path)[:-1])
-        nusc = NuScenes(version=self.version, dataroot=self.dataset_root, verbose=False)
+        nusc = NuScenes(
+            version=self.version,
+            dataroot=self.dataset_root,
+            verbose=False,
+            edited_samples_path=edited_samples_path
+        )
         eval_set_map = {
             "v1.0-mini": "mini_val",
             "v1.0-trainval": "val",
@@ -443,11 +450,13 @@ class NuScenesDataset(Custom3DDataset):
             eval_set=eval_set_map[self.version],
             output_dir=output_dir,
             verbose=False,
+            edited_objects_list=edited_objects_list,
         )
         nusc_eval.main(render_curves=False)
 
         # record metrics
         metrics = mmcv.load(osp.join(output_dir, "metrics_summary.json"))
+
         detail = dict()
         for name in self.CLASSES:
             for k, v in metrics["label_aps"][name].items():
@@ -561,10 +570,18 @@ class NuScenesDataset(Custom3DDataset):
             if isinstance(result_files, dict):
                 for name in result_names:
                     print("Evaluating bboxes of {}".format(name))
-                    ret_dict = self._evaluate_single(result_files[name])
+                    ret_dict = self._evaluate_single(
+                        result_files[name],
+                        edited_samples_path=kwargs.get("edited_samples_path", None),
+                        edited_objects_list=kwargs.get("edited_objects_list", None),
+                    )
                 metrics.update(ret_dict)
             elif isinstance(result_files, str):
-                metrics.update(self._evaluate_single(result_files))
+                metrics.update(self._evaluate_single(
+                    result_files,
+                    edited_samples_path=kwargs.get("edited_samples_path", None)),
+                    edited_objects_list=kwargs.get("edited_objects_list", None),
+                )
 
             if tmp_dir is not None:
                 tmp_dir.cleanup()
