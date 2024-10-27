@@ -18,7 +18,6 @@ ref_mode: track-ref
 object_area_crop: 0.2
 
 classes:
-  - empty # erase masks
   - car
   - pedestrian
   # - traffic_cone
@@ -32,8 +31,6 @@ classes:
 
 conditions:
   - ref_image
-  # - ref_bbox
-  # - ref_label
 
 model:
   base_learning_rate: 8.0e-05
@@ -117,7 +114,6 @@ model:
     cond_stage_config:
       target: ldm.modules.encoders.modules.FrozenCLIPImageEmbedder
       params:
-        classes: ${classes}
         conditions: ${conditions}
 
 data:
@@ -141,7 +137,7 @@ data:
               fixed_sampling: False
               ref_aug: True
               ref_mode: ${ref_mode}
-              include_erase_boxes: False
+              prob_erase_box: 0.3
               image_height: ${image_height}
               image_width: ${image_width}
               range_height: ${range_height}
@@ -162,8 +158,9 @@ data:
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0
               object_area_crop: ${object_area_crop}
-              num_samples_per_class: 256
+              num_samples_per_class: 512
               fixed_sampling: True
+              prob_erase_box: 0.3
               ref_aug: True
               ref_mode: ${ref_mode}
               image_height: ${image_height}
@@ -210,7 +207,8 @@ data:
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0
               object_area_crop: ${object_area_crop}
-              prob_use_3d_edit_mask: 1
+              num_samples_per_class: 8
+              fixed_sampling: True
               ref_aug: False
               object_random_crop: False
               ref_mode: "id-ref"
@@ -222,9 +220,11 @@ data:
               range_object_norm: ${range_object_norm}
               range_object_norm_scale: ${range_object_norm_scale}
               range_int_norm: ${range_int_norm}
-              specific_scene: "06be0e3b665c44fa8d17d9f4770bdf9c"
+              rot_test_scene: "a18be1888ea5465eb6530ae4b1eb69d7"
               object_classes:
+                # - empty
                 - car
+                # - pedestrian
 
 lightning:
   trainer:

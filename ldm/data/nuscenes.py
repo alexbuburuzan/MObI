@@ -78,16 +78,17 @@ class NuScenesDataset(data.Dataset):
         min_lidar_points=64,
         rot_every_angle=0,
         rot_test_scene=None, # used for rotation test
+        rot_test_bbox_shift=[3, -10, -1.5],
         use_lidar=False,
         use_camera=True,
         random_range_crop=False,
         num_samples_per_class=None,
+        prob_erase_box=0,
         fixed_sampling=True,
         return_original_image=False,
         range_object_norm=True,
         range_object_norm_scale=0.75,
         range_int_norm=False,
-        include_erase_boxes=False,
         object_meta_dump_path: str = None,
         specific_object=None,
     ) -> None:
@@ -99,6 +100,7 @@ class NuScenesDataset(data.Dataset):
         self.prob_use_3d_edit_mask = prob_use_3d_edit_mask
         self.prob_drop_context = prob_drop_context
         self.rot_test_scene = rot_test_scene
+        self.rot_test_bbox_shift = rot_test_bbox_shift
         self.use_lidar = use_lidar
         self.use_camera = use_camera
         self.random_range_crop = random_range_crop
@@ -109,8 +111,8 @@ class NuScenesDataset(data.Dataset):
         self.range_object_norm_scale = range_object_norm_scale
         self.range_int_norm = range_int_norm
         self.num_samples_per_class = num_samples_per_class
+        self.prob_erase_box = prob_erase_box
         self.fixed_sampling = fixed_sampling
-        self.num_classes = len(object_classes)
 
         # Dimensions
         self.image_height = image_height
@@ -133,11 +135,13 @@ class NuScenesDataset(data.Dataset):
              (self.objects_meta_all["max_distance"] < 54) &
              (self.objects_meta_all["min_distance"] > 1.4))
         ]
-        if not include_erase_boxes and "empty" in object_classes:
-            self.objects_meta_all = self.objects_meta_all[
-                (self.objects_meta_all["object_class"] != "empty")
-            ]
-            self.num_classes -= 1
+
+        self.erase_meta_all = self.objects_meta_all[
+            self.objects_meta_all["is_erase_box"]
+        ]
+        self.objects_meta_all = self.objects_meta_all[
+            ~self.objects_meta_all["is_erase_box"]
+        ]
 
         if specific_object is None:
             if object_meta_dump_path is None:
@@ -177,11 +181,13 @@ class NuScenesDataset(data.Dataset):
             ]
 
         self.idx_lists = []
+        self.idx_lists_erase = []
         for object_class in self.object_classes:
-            if object_class == "empty" and not include_erase_boxes:
-                continue
             self.idx_lists.append(
                 self.objects_meta[self.objects_meta['object_class'] == object_class].index.tolist()
+            )
+            self.idx_lists_erase.append(
+                self.erase_meta_all[self.erase_meta_all["object_class"] == object_class].index.tolist()
             )
 
         if rot_every_angle != 0:
@@ -210,11 +216,17 @@ class NuScenesDataset(data.Dataset):
         self.image_resize = T.Resize([image_height, image_width])
 
     def __getitem__(self, index):
-        if self.num_samples_per_class and self.fixed_sampling is False:
+        if (random.random() < self.prob_erase_box):
             index = np.random.choice(
-                self.idx_lists[index % self.num_classes]
+                self.idx_lists_erase[index % len(self.object_classes)]
             )
-        object_meta = self.objects_meta.iloc[index]
+            object_meta = self.erase_meta_all.loc[index]
+        else:
+            if self.num_samples_per_class and self.fixed_sampling is False:
+                index = np.random.choice(
+                    self.idx_lists[index % len(self.object_classes)]
+                )
+            object_meta = self.objects_meta.loc[index]
 
         if self.rot_test_scene is not None:
             scene_info = self.scenes_info[self.rot_test_scene]
@@ -229,7 +241,7 @@ class NuScenesDataset(data.Dataset):
         if self.rot_test_scene is None:
             bbox_3d = scene_info["gt_bboxes_3d_corners"][object_meta["scene_obj_idx"]]
         else:
-            bbox_3d = translate_bbox(ref_bbox_3d, [3, -10, -1.5])
+            bbox_3d = translate_bbox(ref_bbox_3d, self.rot_test_bbox_shift)
 
         bbox_rot_angle = object_meta.get("bbox_rot_angle", 0)
         bbox_3d = rotate_bbox(bbox_3d, bbox_rot_angle)
@@ -255,7 +267,7 @@ class NuScenesDataset(data.Dataset):
             if self.use_camera:
                 data["image"]["cond"]["ref_bbox"][..., 2] = data["lidar"]["cond"]["ref_bbox"][..., 2]
         
-        if object_meta["object_class"] == "empty" or self.ref_mode == "erase-ref":
+        if object_meta["is_erase_box"] or self.ref_mode == "erase-ref":
             # dummy box conditioning for erasing
             if self.use_lidar: data["image"]["cond"]["ref_bbox"] *= 0
             if self.use_camera: data["lidar"]["cond"]["ref_bbox"] *= 0
@@ -263,12 +275,10 @@ class NuScenesDataset(data.Dataset):
         return data
     
     def __len__(self):
-        if self.num_samples_per_class is None or self.fixed_sampling:
-            return len(self.objects_meta)
-        return self.num_classes * self.num_samples_per_class
+        return len(self.object_classes) * self.num_samples_per_class
     
     def get_reference(self, current_object_meta, index):
-        if self.ref_mode == "id-ref" or self.ref_mode == "erase-ref" or current_object_meta["object_class"] == "empty":
+        if self.ref_mode == "id-ref" or self.ref_mode == "erase-ref" or current_object_meta["is_erase_box"]:
             reference_meta = current_object_meta
         elif self.ref_mode == "in-domain-ref":
             reference_meta = self.objects_meta_all[
@@ -310,7 +320,7 @@ class NuScenesDataset(data.Dataset):
         ref_bbox_3d = ref_scene_info["gt_bboxes_3d_corners"][ref_obj_idx]
         ref_class = reference_meta["object_class"]
 
-        if self.ref_mode == "erase-ref" or current_object_meta["object_class"] == "empty":
+        if self.ref_mode == "erase-ref" or current_object_meta["is_erase_box"]:
             ref_image = np.zeros((224, 224, 3), dtype=np.uint8)
             ref_class = "empty"
         else:
