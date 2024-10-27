@@ -289,7 +289,7 @@ def main():
 
     lidar_path = os.path.join(outpath, "lidar")
     camera_path = os.path.join(outpath, "camera")
-    sample_path = os.path.join(outpath, "samples")
+    sample_path = os.path.join(outpath, f"samples_seed{opt.seed}")
     os.makedirs(camera_path, exist_ok=True)
     os.makedirs(lidar_path, exist_ok=True)
     os.makedirs(sample_path, exist_ok=True)
@@ -489,7 +489,7 @@ def main():
                                 # create instance mask for predicted object
                                 pred_instance_mask = np.zeros(np.prod(gt_instance_mask.shape))
                                 label = np.arange(0, np.prod(gt_instance_mask.shape)).reshape(gt_instance_mask.shape)
-                                points, points_label = lidar_converter.range2pcd(range_sample_depth[i], pitch[i], yaw[i], label)
+                                points, points_label, _ = lidar_converter.range2pcd(range_sample_depth[i], pitch[i], yaw[i], label)
 
                                 object_points = points_in_bbox_corners(points, bbox_3d)
                                 object_pixels = points_label[object_points[:, 0]]
@@ -511,9 +511,22 @@ def main():
                                     batch["lidar"]["range_int_orig"][i].cpu().numpy()
                                 )
 
+                                # save range view for computing lidar realism
+                                range_pred = np.stack([
+                                    range_depth_final, range_int_final, pitch[i], yaw[i]
+                                ])
+                                os.makedirs(os.path.join(lidar_path, "range_pred"), exist_ok=True)
+                                np.save(os.path.join(lidar_path, "range_pred", segment_id_batch[i] + f'_range_pred_seed{opt.seed}.npy'), range_pred)
+
+                                range_orig = np.stack([
+                                    batch["lidar"]["range_depth_orig"][i].cpu().numpy(), batch["lidar"]["range_int_orig"][i].cpu().numpy(), pitch[i], yaw[i]
+                                ])
+                                os.makedirs(os.path.join(lidar_path, "range_orig"), exist_ok=True)
+                                np.save(os.path.join(lidar_path, "range_orig", segment_id_batch[i] + f'_range_orig_seed{opt.seed}.npy'), range_orig)
+
                                 # create edited point cloud
-                                points_coord, points_int = lidar_converter.range2pcd(range_depth_final, pitch[i], yaw[i], range_int_final)
-                                pred_points = np.concatenate([points_coord, points_int[:, None]], axis=1)
+                                points_coord, points_int, beam_index = lidar_converter.range2pcd(range_depth_final, pitch[i], yaw[i], range_int_final)
+                                pred_points = np.concatenate([points_coord, points_int[:, None], beam_index[:, None]], axis=1)
 
                                 np.save(os.path.join(sample_path, file_name), pred_points)
 

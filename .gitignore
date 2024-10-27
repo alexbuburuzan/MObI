@@ -151,4 +151,4 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-eval_tool/lidar/models
+eval_tool/lidar/rangenet/segmentation_**

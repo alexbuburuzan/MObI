@@ -166,7 +166,13 @@ class LidarConverter:
         pcd = pcd[mask, :]
         label = label.flatten()[mask] if label is not None else None
 
-        return pcd, label
+        # beam index
+        H, W = range_pitch.shape
+        beam_index = np.arange(H - 1, -1, -1).reshape(H, 1)
+        beam_index = np.tile(beam_index, (1, W))
+        beam_index = beam_index.flatten()[mask]
+
+        return pcd, label, beam_index
     
     def get_range_coords(self, bbox_3d):
         """

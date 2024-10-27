@@ -153,7 +153,7 @@ def process_sample(j, database_save_path):
     # Create instance mask for each object
     range_mask = np.zeros(np.prod(range_depth.shape)) - 1
     label = np.arange(0, np.prod(range_depth.shape)).reshape(range_depth.shape)
-    points_new, points_label = lidar_converter.range2pcd(range_depth, range_pitch, range_yaw, label)
+    points_new, points_label, _ = lidar_converter.range2pcd(range_depth, range_pitch, range_yaw, label)
 
     object_points = box_np_ops.points_in_bbox_corners(points_new, bboxes_3d[..., :3])
     object_points_orig = box_np_ops.points_in_bbox_corners(points[:, :3], bboxes_3d[..., :3])

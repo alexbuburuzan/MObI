@@ -416,9 +416,9 @@ def get_lidar_vis(
     for i in range(len(sample)):
         bbox_3d = bboxes[i]
 
-        sample_pc, _ = lidar_converter.range2pcd(sample[i], range_pitch[i], range_yaw[i])
-        input_pc, _ = lidar_converter.range2pcd(input[i], range_pitch[i], range_yaw[i])
-        rec_pc, _ = lidar_converter.range2pcd(rec[i], range_pitch[i], range_yaw[i])
+        sample_pc, _, _ = lidar_converter.range2pcd(sample[i], range_pitch[i], range_yaw[i])
+        input_pc, _, _ = lidar_converter.range2pcd(input[i], range_pitch[i], range_yaw[i])
+        rec_pc, _, _ = lidar_converter.range2pcd(rec[i], range_pitch[i], range_yaw[i])
 
         sample_pc, _ = focus_on_bbox(sample_pc, bbox_3d)
         input_pc, _ = focus_on_bbox(input_pc, bbox_3d)
