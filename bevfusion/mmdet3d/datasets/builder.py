@@ -17,7 +17,7 @@ if platform.system() != "Windows":
 OBJECTSAMPLERS = Registry("Object sampler")
 
 
-def build_dataset(cfg, default_args=None):
+def build_dataset(cfg, default_args=None, dataset_kwargs=None):
     from mmdet3d.datasets.dataset_wrappers import CBGSDataset
     from mmdet.datasets.dataset_wrappers import ClassBalancedDataset, ConcatDataset, RepeatDataset
 
@@ -39,6 +39,6 @@ def build_dataset(cfg, default_args=None):
     elif isinstance(cfg.get("ann_file"), (list, tuple)):
         dataset = _concat_dataset(cfg, default_args)
     else:
-        dataset = build_from_cfg(cfg, DATASETS, default_args)
+        dataset = build_from_cfg(cfg, DATASETS, default_args, dataset_kwargs)
 
     return dataset

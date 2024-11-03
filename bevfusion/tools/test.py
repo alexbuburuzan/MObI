@@ -131,7 +131,6 @@ def main():
 
     configs.load(args.config, recursive=True)
     cfg = Config(recursive_eval(configs), filename=args.config)
-    print(cfg)
 
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
@@ -158,6 +157,12 @@ def main():
             for ds_cfg in cfg.data.test:
                 ds_cfg.pipeline = replace_ImageToTensor(ds_cfg.pipeline)
 
+    # Modify cfg for MObI eval
+    for entry in cfg.data.test["pipeline"]:
+        # Set the number of sweeps to be 1
+        if entry["type"] == "LoadPointsFromMultiSweeps":
+            entry["sweeps_num"] = 1
+
     # init distributed env first, since logger depends on the dist info.
     distributed = True
 
@@ -166,7 +171,10 @@ def main():
         set_random_seed(args.seed, deterministic=args.deterministic)
 
     # build the dataloader
-    dataset = build_dataset(cfg.data.test)
+    if args.eval_options is not None and "edited_samples_path" in args.eval_options:
+        dataset = build_dataset(cfg.data.test, dataset_kwargs={"edited_samples_path": args.eval_options["edited_samples_path"]})
+    else:
+        dataset = build_dataset(cfg.data.test)
     data_loader = build_dataloader(
         dataset,
         samples_per_gpu=samples_per_gpu,

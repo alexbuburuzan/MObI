@@ -112,6 +112,7 @@ class LoadPointsFromMultiSweeps:
     ):
         self.load_dim = load_dim
         self.sweeps_num = sweeps_num
+        assert sweeps_num == 1, "MObI only supports sweeps_num=1"
         if isinstance(use_dim, int):
             use_dim = list(range(use_dim))
         self.use_dim = use_dim
@@ -390,7 +391,10 @@ class LoadPointsFromFile:
                 - points (:obj:`BasePoints`): Point clouds data.
         """
         lidar_path = results["lidar_path"]
-        points = self._load_points(lidar_path)
+        points = self._load_points(lidar_path).ravel()
+        if (over := points.shape[0] % self.load_dim) > 0:
+            print(f"SOMETHING WRONG WITH THE POINTS! {points.shape}, {self.load_dim}, {lidar_path}")
+            points = points[:-over]
         points = points.reshape(-1, self.load_dim)
         # TODO: make it more general
         if self.reduce_beams and self.reduce_beams < 32:
@@ -517,6 +521,8 @@ class LoadAnnotations3D(LoadAnnotations):
             dict: The dict containing loaded label annotations.
         """
         results["gt_labels_3d"] = results["ann_info"]["gt_labels_3d"]
+        # Don't even ask
+        results["ann_tokens"] = np.array([[ord(c) for c in s] for s in results["ann_info"]["ann_tokens"]])
         return results
 
     def _load_attr_labels(self, results):

@@ -1,6 +1,7 @@
+import os
 import tempfile
 from os import path as osp
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import mmcv
 import numpy as np
@@ -137,9 +138,11 @@ class NuScenesDataset(Custom3DDataset):
         test_mode=False,
         eval_version="detection_cvpr_2019",
         use_valid_flag=False,
+        edited_samples_path: Optional[str] = None,
     ) -> None:
         self.load_interval = load_interval
         self.use_valid_flag = use_valid_flag
+        self.edited_samples_path = edited_samples_path
         super().__init__(
             dataset_root=dataset_root,
             ann_file=ann_file,
@@ -275,6 +278,37 @@ class NuScenesDataset(Custom3DDataset):
                 camera2lidar[:3, :3] = camera_info["sensor2lidar_rotation"]
                 camera2lidar[:3, 3] = camera_info["sensor2lidar_translation"]
                 data["camera2lidar"].append(camera2lidar)
+
+
+        # If set, load the edited samples into the sample_data table
+        if self.edited_samples_path is not None:
+            # Find all edited images
+            edited_samples = {}
+            for _, _, files in os.walk(osp.join(self.dataset_root, self.edited_samples_path)):
+                for file in files:
+                    if file.endswith(".json"):  # we skip the json files
+                        continue
+                    fname = file
+                    if file.endswith('.pcd.bin.npy'):  # TODO: Fix?
+                        fname = file.replace('.pcd.bin.npy', '.pcd.bin')
+                    edited_samples[fname] = osp.join(self.edited_samples_path, file)
+
+            # Replace the original image paths with the edited image paths
+            count = 0
+            def _replace_path(original_path, count=count):
+                filename = osp.basename(original_path)
+                if filename in edited_samples:
+                    print(f"Replacing {filename} with {edited_samples[filename]}")
+                    count += 1
+                    return os.path.join(self.dataset_root, edited_samples[filename])
+                return original_path
+
+            data["lidar_path"] = _replace_path(data["lidar_path"])
+            data["image_paths"] = [_replace_path(p) for p in data["image_paths"]]
+            for d in data["sweeps"]:
+                d["data_path"] = _replace_path(d["data_path"])
+
+            # assert count == len(edited_samples), f"Not all edited samples were found in the dataset ({count} != {len(edited_samples)})"
 
         annos = self.get_ann_info(index)
         data["ann_info"] = annos

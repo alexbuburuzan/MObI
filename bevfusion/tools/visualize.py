@@ -1,5 +1,6 @@
 import argparse
 import copy
+import json
 import os
 
 import mmcv
@@ -10,7 +11,6 @@ from mmcv.parallel import MMDistributedDataParallel
 from mmcv.runner import load_checkpoint
 from torchpack import distributed as dist
 from torchpack.utils.config import configs
-from torchpack.utils.tqdm import tqdm
 
 from mmdet3d.core import LiDARInstance3DBoxes
 from mmdet3d.core.utils import visualize_camera, visualize_lidar, visualize_map
@@ -44,9 +44,11 @@ def main() -> None:
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--split", type=str, default="val", choices=["train", "val"])
     parser.add_argument("--bbox-classes", nargs="+", type=int, default=None)
-    parser.add_argument("--bbox-score", type=float, default=None)
+    parser.add_argument("--bbox-score", type=float, default=0.08)
     parser.add_argument("--map-score", type=float, default=0.5)
     parser.add_argument("--out-dir", type=str, default="viz")
+    parser.add_argument("--edited-samples-path", type=str, default=None)
+    parser.add_argument("--edited-objects-list", type=str, default=None)
     args, opts = parser.parse_known_args()
 
     configs.load(args.config, recursive=True)
@@ -54,11 +56,20 @@ def main() -> None:
 
     cfg = Config(recursive_eval(configs), filename=args.config)
 
+    # Modify cfg
+    for entry in cfg.data[args.split]["pipeline"]:
+        # We add the token key because we need it for filtering
+        if entry["type"] == "Collect3D":
+            entry["keys"].append("ann_tokens")
+        # Set the number of sweeps to be 1
+        if entry["type"] == "LoadPointsFromMultiSweeps":
+            entry["sweeps_num"] = 1
+
     torch.backends.cudnn.benchmark = cfg.cudnn_benchmark
     torch.cuda.set_device(dist.local_rank())
 
     # build the dataloader
-    dataset = build_dataset(cfg.data[args.split])
+    dataset = build_dataset(cfg.data[args.split], dataset_kwargs={"edited_samples_path": args.edited_samples_path})
     dataflow = build_dataloader(
         dataset,
         samples_per_gpu=1,
@@ -79,7 +90,7 @@ def main() -> None:
         )
         model.eval()
 
-    for data in tqdm(dataflow):
+    for data in dataflow:
         metas = data["metas"].data[0][0]
         name = "{}-{}".format(metas["timestamp"], metas["token"])
 
@@ -90,14 +101,31 @@ def main() -> None:
         if args.mode == "gt" and "gt_bboxes_3d" in data:
             bboxes = data["gt_bboxes_3d"].data[0][0].tensor.numpy()
             labels = data["gt_labels_3d"].data[0][0].numpy()
+            tokens = data["ann_tokens"].data[0].numpy()
 
             if args.bbox_classes is not None:
                 indices = np.isin(labels, args.bbox_classes)
                 bboxes = bboxes[indices]
                 labels = labels[indices]
+                tokens = tokens[indices]
+
+            # Convert tokens to strings
+            tokens = np.array([''.join(chr(i) for i in row) for row in tokens])
+
+            # Filter gt boxes to keep only the ones that were edited
+            if args.edited_objects_list is not None:
+                with open(os.path.join(dataset.dataset_root, args.edited_objects_list), "r") as f:
+                    inserted_boxes = json.load(f)
+                if metas["token"] not in inserted_boxes:
+                    continue
+                indices = [token in inserted_boxes[metas["token"]] for gt_box, token in zip(bboxes, tokens)]
+                bboxes = bboxes[indices]
+                labels = labels[indices]
+                tokens = tokens[indices]
 
             # bboxes[..., 2] -= bboxes[..., 5] / 2
             bboxes = LiDARInstance3DBoxes(bboxes, box_dim=9)
+
         elif args.mode == "pred" and "boxes_3d" in outputs[0]:
             bboxes = outputs[0]["boxes_3d"].tensor.numpy()
             scores = outputs[0]["scores_3d"].numpy()
@@ -134,32 +162,33 @@ def main() -> None:
             for k, image_path in enumerate(metas["filename"]):
                 image = mmcv.imread(image_path)
                 visualize_camera(
-                    os.path.join(args.out_dir, f"camera-{k}", f"{name}.png"),
                     image,
+                    fpath=os.path.join(args.out_dir, f"camera-{k}", f"{name}.png"),
                     bboxes=bboxes,
-                    labels=labels,
+                    labels=labels * 0 + 1 if args.edited_objects_list is not None else labels,
                     transform=metas["lidar2image"][k],
                     classes=cfg.object_classes,
+                    save_figure=True,
                 )
 
-        if "points" in data:
-            lidar = data["points"].data[0][0].numpy()
-            visualize_lidar(
-                os.path.join(args.out_dir, "lidar", f"{name}.png"),
-                lidar,
-                bboxes=bboxes,
-                labels=labels,
-                xlim=[cfg.point_cloud_range[d] for d in [0, 3]],
-                ylim=[cfg.point_cloud_range[d] for d in [1, 4]],
-                classes=cfg.object_classes,
-            )
+        # if "points" in data:
+        #     lidar = data["points"].data[0][0].numpy()
+        #     visualize_lidar(
+        #         lidar,
+        #         fpath=os.path.join(args.out_dir, "lidar", f"{name}.png"),
+        #         bboxes=bboxes,
+        #         # labels=labels,
+        #         xlim=[cfg.point_cloud_range[d] for d in [0, 3]],
+        #         ylim=[cfg.point_cloud_range[d] for d in [1, 4]],
+        #         # classes=cfg.object_classes,
+        #     )
 
-        if masks is not None:
-            visualize_map(
-                os.path.join(args.out_dir, "map", f"{name}.png"),
-                masks,
-                classes=cfg.map_classes,
-            )
+        # if masks is not None:
+        #     visualize_map(
+        #         masks,
+        #         fpath=os.path.join(args.out_dir, "map", f"{name}.png"),
+        #         classes=cfg.map_classes,
+        #     )
 
 
 if __name__ == "__main__":
