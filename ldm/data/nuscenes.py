@@ -121,19 +121,24 @@ class NuScenesDataset(data.Dataset):
         self.range_width = range_width
 
         self.object_classes = object_classes
-        self.objects_meta_all = pd.read_csv(object_database_path, index_col=0)
-        # Filter out small, occluded objects
-        self.objects_meta_all = self.objects_meta_all[
-            ((self.objects_meta_all["reference_image_h"] >= reference_image_min_h) &
-             (self.objects_meta_all["reference_image_h"] <= reference_image_max_h) &
-             (self.objects_meta_all["reference_image_w"] >= reference_image_min_w) &
-             (self.objects_meta_all["reference_image_w"] <= reference_image_max_w) &
-             (self.objects_meta_all["max_iou_overlap"] <= frustum_iou_max) &
-             (self.objects_meta_all["object_class"].isin(object_classes)) &
-             (self.objects_meta_all["camera_visibility_mask"] >= camera_visibility_min) &
-             (self.objects_meta_all["num_lidar_points"] >= min_lidar_points) &
-             (self.objects_meta_all["max_distance"] < 54) &
-             (self.objects_meta_all["min_distance"] > 1.4))
+        self.objects_meta_orig = pd.read_csv(object_database_path, index_col=0)
+
+        # Apply trivial filters
+        self.objects_meta_orig = self.objects_meta_orig[
+            ((self.objects_meta_orig["object_class"].isin(object_classes)) &
+             (self.objects_meta_orig["camera_visibility_mask"] >= camera_visibility_min) &
+             (self.objects_meta_orig["max_distance"] < 54) &
+             (self.objects_meta_orig["min_distance"] > 1.4))
+        ]
+
+        # Aply additional filters
+        self.objects_meta_all = self.objects_meta_orig[
+            ((self.objects_meta_orig["reference_image_h"] >= reference_image_min_h) &
+             (self.objects_meta_orig["reference_image_h"] <= reference_image_max_h) &
+             (self.objects_meta_orig["reference_image_w"] >= reference_image_min_w) &
+             (self.objects_meta_orig["reference_image_w"] <= reference_image_max_w) &
+             (self.objects_meta_orig["max_iou_overlap"] <= frustum_iou_max) &
+             (self.objects_meta_orig["num_lidar_points"] >= min_lidar_points))
         ]
 
         self.erase_meta_all = self.objects_meta_all[
@@ -148,14 +153,29 @@ class NuScenesDataset(data.Dataset):
                 # Select an object from each class when testing
                 if num_samples_per_class is not None and fixed_sampling:
                     self.objects_meta = self.objects_meta_all.groupby("object_class").apply(
-                        lambda x: x.sample(num_samples_per_class, replace=True)
+                        lambda x: x.sample(num_samples_per_class, replace=(len(x) < num_samples_per_class))
                     )
                 else:
                     self.objects_meta = self.objects_meta_all
             else:
+                # Sample one object per scene
                 self.objects_meta = self.objects_meta_all.groupby("scene_token").apply(
                     lambda x: x.sample(n=1)
                 )
+
+                # Find scenes missing from the current selection
+                selected_scene_tokens = set(self.objects_meta["scene_token"])
+                all_scene_tokens = set(self.objects_meta_orig["scene_token"])
+                missing_scenes = all_scene_tokens - selected_scene_tokens
+
+                # Sample one object per missing scene and add to the main selection
+                missing_scene_objects = self.objects_meta_orig[
+                    self.objects_meta_orig["scene_token"].isin(missing_scenes)
+                ].groupby("scene_token").apply(lambda x: x.sample(n=1))
+
+                # Concatenate to ensure all scenes are represented
+                self.objects_meta = pd.concat([self.objects_meta, missing_scene_objects])
+                self.objects_meta_all = pd.concat([self.objects_meta_all, missing_scene_objects])
 
                 object_meta_dump = {
                     row["scene_token"]: row["track_id"]
@@ -165,6 +185,8 @@ class NuScenesDataset(data.Dataset):
                 os.makedirs(os.path.dirname(object_meta_dump_path), exist_ok=True)
                 with open(object_meta_dump_path, "w") as f:
                     json.dump(object_meta_dump, f)
+
+                self.num_samples_per_class = None
 
             self.objects_meta = self.objects_meta.reset_index(drop=True)
         else:
@@ -216,7 +238,7 @@ class NuScenesDataset(data.Dataset):
         self.image_resize = T.Resize([image_height, image_width])
 
     def __getitem__(self, index):
-        if (random.random() < self.prob_erase_box):
+        if (random.random() < self.prob_erase_box) and len(self.idx_lists_erase[index % len(self.object_classes)]) > 0:
             index = np.random.choice(
                 self.idx_lists_erase[index % len(self.object_classes)]
             )
@@ -275,6 +297,8 @@ class NuScenesDataset(data.Dataset):
         return data
     
     def __len__(self):
+        if self.num_samples_per_class is None:
+            return len(self.objects_meta)
         return len(self.object_classes) * self.num_samples_per_class
     
     def get_reference(self, current_object_meta, index):
@@ -505,8 +529,12 @@ class NuScenesDataset(data.Dataset):
         crop_W = min(crop_W, W)
 
         if self.object_random_crop:
-            left = random.randint(max(0, x2 - crop_W), min(x1, W - crop_W))
-            top = random.randint(max(0, y2 - crop_H), min(y1, H - crop_H))
+            try:
+                left = random.randint(max(0, x2 - crop_W), min(x1, W - crop_W))
+                top = random.randint(max(0, y2 - crop_H), min(y1, H - crop_H))
+            except:
+                left = torch.div(max(0, x2 - crop_W) + min(x1, W - crop_W), 2, rounding_mode='floor')
+                top = torch.div(max(0, y2 - crop_H) + min(y1, H - crop_H), 2, rounding_mode='floor')
         else:
             left = torch.div(max(0, x2 - crop_W) + min(x1, W - crop_W), 2, rounding_mode='floor')
             top = torch.div(max(0, y2 - crop_H) + min(y1, H - crop_H), 2, rounding_mode='floor')
