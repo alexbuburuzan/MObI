@@ -1,5 +1,5 @@
 use_camera: True
-use_lidar: False
+use_lidar: True
 
 image_height: 512
 image_width: 512
@@ -23,6 +23,7 @@ classes:
 
 conditions:
   - ref_image
+  - ref_bbox
 
 model:
   base_learning_rate: 8.0e-05
@@ -39,7 +40,7 @@ model:
     channels: 4
     cond_stage_trainable: true   # Note: different from the one we trained before
     conditioning_key: crossattn
-    monitor: val/loss_simple_ema
+    monitor: val/loss_simple_ema # val/median_error/object_pred_depth_epoch
     u_cond_percent: 0.2
     scale_factor: 0.18215
     lidar_scale_factor: 0.18215
@@ -99,6 +100,31 @@ model:
           - 4
           num_res_blocks: 2
           attn_resolutions: []
+          dropout: 0.0
+        lossconfig:
+          target: torch.nn.Identity
+
+    lidar_stage_config:
+      target: ldm.models.autoencoder.AutoencoderKL
+      params:
+        embed_dim: 4
+        monitor: val/rec_loss
+        ckpt_path: "models/LiDAR/2024-07-26T00-10-07_range_autoencoder/checkpoints/epoch=000007.ckpt"
+        ddconfig:
+          double_z: true
+          z_channels: 4
+          resolution: ${image_height}
+          in_channels: 2
+          out_ch: 2
+          ch: 128
+          ch_mult:
+          - 1
+          - 2
+          - 4
+          - 4
+          num_res_blocks: 2
+          attn_resolutions: []
+          lidar_adapter: True
           dropout: 0.0
         lossconfig:
           target: torch.nn.Identity
@@ -220,7 +246,7 @@ data:
 
 lightning:
   trainer:
-    max_epochs: 40
+    max_epochs: 30
     num_nodes: 1
     accelerator: 'gpu'
     gpus: "0"

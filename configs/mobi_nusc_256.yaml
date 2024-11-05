@@ -1,14 +1,14 @@
 use_camera: True
 use_lidar: True
 
-image_height: 512
-image_width: 512
-latent_size: 64 # image_width // 8
+image_height: 256
+image_width: 256
+latent_size: 32 # image_width // 8
 
-range_height: 512
-range_width: 512 # use feature map crop instead of range crop
+range_height: 256
+range_width: 256 # use feature map crop instead of range crop
 
-batch_size: 2
+batch_size: 20
 range_object_norm: True
 range_object_norm_scale: 0.75
 range_int_norm: True
@@ -20,14 +20,6 @@ object_area_crop: 0.2
 classes:
   - car
   - pedestrian
-  # - traffic_cone
-  # - truck
-  # - construction_vehicle
-  # - bus
-  # - trailer
-  # - barrier
-  # - motorcycle
-  # - bicycle
 
 conditions:
   - ref_image
@@ -154,8 +146,8 @@ data:
               state: train
               use_lidar: ${use_lidar}
               use_camera: ${use_camera}
-              object_database_path: data/nuscenes-mini/nuscenes_dbinfos_pbe_train.csv
-              scene_database_path: data/nuscenes-mini/nuscenes_scene_infos_pbe_train.pkl
+              object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_train.csv
+              scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_train.pkl
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0
               object_area_crop: ${object_area_crop}
@@ -179,8 +171,8 @@ data:
               state: val
               use_lidar: ${use_lidar}
               use_camera: ${use_camera}
-              object_database_path: data/nuscenes-mini/nuscenes_dbinfos_pbe_val.csv
-              scene_database_path: data/nuscenes-mini/nuscenes_scene_infos_pbe_val.pkl
+              object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.csv
+              scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0
               object_area_crop: ${object_area_crop}
@@ -204,8 +196,8 @@ data:
               state: test
               use_lidar: ${use_lidar}
               use_camera: ${use_camera}
-              object_database_path: data/nuscenes-mini/nuscenes_dbinfos_pbe_val.csv
-              scene_database_path: data/nuscenes-mini/nuscenes_scene_infos_pbe_val.pkl
+              object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.csv
+              scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0
               object_area_crop: ${object_area_crop}
@@ -228,8 +220,8 @@ data:
               state: test
               use_lidar: ${use_lidar}
               use_camera: ${use_camera}
-              object_database_path: data/nuscenes-mini/nuscenes_dbinfos_pbe_val.csv
-              scene_database_path: data/nuscenes-mini/nuscenes_scene_infos_pbe_val.pkl
+              object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.csv
+              scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0
               object_area_crop: ${object_area_crop}

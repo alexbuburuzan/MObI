@@ -1,14 +1,14 @@
 use_camera: True
-use_lidar: False
+use_lidar: True
 
-image_height: 512
-image_width: 512
-latent_size: 64 # image_width // 8
+image_height: 256
+image_width: 256
+latent_size: 32 # image_width // 8
 
-range_height: 512
-range_width: 512 # use feature map crop instead of range crop
+range_height: 256
+range_width: 256 # use feature map crop instead of range crop
 
-batch_size: 2
+batch_size: 20
 range_object_norm: True
 range_object_norm_scale: 0.75
 range_int_norm: True
@@ -20,9 +20,18 @@ object_area_crop: 0.2
 classes:
   - car
   - pedestrian
+  - traffic_cone
+  - truck
+  - construction_vehicle
+  - bus
+  - trailer
+  - barrier
+  - motorcycle
+  - bicycle
 
 conditions:
   - ref_image
+  - ref_bbox
 
 model:
   base_learning_rate: 8.0e-05
@@ -39,7 +48,7 @@ model:
     channels: 4
     cond_stage_trainable: true   # Note: different from the one we trained before
     conditioning_key: crossattn
-    monitor: val/loss_simple_ema
+    monitor: val/loss_simple_ema # val/median_error/object_pred_depth_epoch
     u_cond_percent: 0.2
     scale_factor: 0.18215
     lidar_scale_factor: 0.18215
@@ -103,6 +112,31 @@ model:
         lossconfig:
           target: torch.nn.Identity
 
+    lidar_stage_config:
+      target: ldm.models.autoencoder.AutoencoderKL
+      params:
+        embed_dim: 4
+        monitor: val/rec_loss
+        ckpt_path: "models/LiDAR/2024-07-26T00-10-07_range_autoencoder/checkpoints/epoch=000007.ckpt"
+        ddconfig:
+          double_z: true
+          z_channels: 4
+          resolution: ${image_height}
+          in_channels: 2
+          out_ch: 2
+          ch: 128
+          ch_mult:
+          - 1
+          - 2
+          - 4
+          - 4
+          num_res_blocks: 2
+          attn_resolutions: []
+          lidar_adapter: True
+          dropout: 0.0
+        lossconfig:
+          target: torch.nn.Identity
+
     cond_stage_config:
       target: ldm.modules.encoders.modules.FrozenCLIPImageEmbedder
       params:
@@ -125,7 +159,7 @@ data:
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0
               object_area_crop: ${object_area_crop}
-              num_samples_per_class: 4096
+              num_samples_per_class: 2048
               fixed_sampling: False
               ref_aug: True
               ref_mode: ${ref_mode}
@@ -150,7 +184,7 @@ data:
               expand_mask_ratio: 0.1
               expand_ref_ratio: 0
               object_area_crop: ${object_area_crop}
-              num_samples_per_class: 512
+              num_samples_per_class: 128
               fixed_sampling: True
               prob_erase_box: 0.3
               ref_aug: True
@@ -220,7 +254,7 @@ data:
 
 lightning:
   trainer:
-    max_epochs: 40
+    max_epochs: 30
     num_nodes: 1
     accelerator: 'gpu'
     gpus: "0"
