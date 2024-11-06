@@ -169,9 +169,15 @@ class NuScenesDataset(data.Dataset):
                 missing_scenes = all_scene_tokens - selected_scene_tokens
 
                 # Sample one object per missing scene and add to the main selection
-                missing_scene_objects = self.objects_meta_orig[
-                    self.objects_meta_orig["scene_token"].isin(missing_scenes)
-                ].groupby("scene_token").apply(lambda x: x.sample(n=1))
+                missing_scene_objects = (
+                    self.objects_meta_orig[
+                        (self.objects_meta_orig["scene_token"].isin(missing_scenes) &
+                        ~self.objects_meta_orig["is_erase_box"])
+                    ]
+                    .groupby("scene_token")
+                    .apply(lambda x: x.nlargest(3, "num_lidar_points").sample(n=1))
+                    .reset_index(drop=True)
+                )
 
                 # Concatenate to ensure all scenes are represented
                 self.objects_meta = pd.concat([self.objects_meta, missing_scene_objects])
