@@ -138,14 +138,16 @@ class NuScenes:
                     edited_samples[fname] = osp.join(edited_samples_path, file)
 
             # Replace the original image paths with the edited image paths
-            count = 0
+            all_filenames = set(edited_samples)
             for sample in self.sample_data:
                 original_path = sample["filename"]
                 filename = osp.basename(original_path)
                 if filename in edited_samples:
                     sample["filename"] = edited_samples[filename]
-                    count += 1
-            assert count == len(edited_samples), "Not all edited images were found in the sample_data table"
+                    all_filenames.remove(filename)
+
+            assert len(all_filenames) == 0, f"Not all edited images were found in the sample_data table: {all_filenames}"
+            print(f"Loaded {len(edited_samples) - len(all_filenames)} edited samples.")
 
         # Initialize NuScenesExplorer class.
         self.explorer = NuScenesExplorer(self)

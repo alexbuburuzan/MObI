@@ -106,7 +106,7 @@ class DetectionEval:
 
         # Load list of edited boxes if provided
         if edited_objects_list is not None:
-            with open(edited_objects_list, 'r') as f:
+            with open(os.path.join(nusc.dataroot, edited_objects_list), 'r') as f:
                 self.inserted_boxes = json.load(f)
         else:
             self.inserted_boxes = None

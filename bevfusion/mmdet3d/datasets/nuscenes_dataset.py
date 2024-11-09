@@ -292,6 +292,7 @@ class NuScenesDataset(Custom3DDataset):
                     if file.endswith('.pcd.bin.npy'):  # TODO: Fix?
                         fname = file.replace('.pcd.bin.npy', '.pcd.bin')
                     edited_samples[fname] = osp.join(self.edited_samples_path, file)
+            assert len(edited_samples) > 0, f"No edited samples found in {self.edited_samples_path}"
 
             # Replace the original image paths with the edited image paths
             count = 0
@@ -611,9 +612,9 @@ class NuScenesDataset(Custom3DDataset):
             elif isinstance(result_files, str):
                 metrics.update(self._evaluate_single(
                     result_files,
-                    edited_samples_path=kwargs.get("edited_samples_path", None)),
+                    edited_samples_path=kwargs.get("edited_samples_path", None),
                     edited_objects_list=kwargs.get("edited_objects_list", None),
-                )
+                ))
 
             if tmp_dir is not None:
                 tmp_dir.cleanup()

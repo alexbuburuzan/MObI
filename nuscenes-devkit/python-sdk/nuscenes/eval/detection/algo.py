@@ -44,6 +44,9 @@ def accumulate(gt_boxes: EvalBoxes,
         print("Found {} GT of class {} out of {} total across {} samples.".
               format(npos, class_name, len(gt_boxes.all), len(gt_boxes.sample_tokens)))
 
+    if inserted_boxes is not None:
+        print(f"Number of GT for class {class_name}", len(all_boxes))
+
     # For missing classes in the GT, return a data structure corresponding to no predictions.
     if npos == 0:
         return DetectionMetricData.no_predictions()
@@ -97,13 +100,17 @@ def accumulate(gt_boxes: EvalBoxes,
         if is_match:
             taken.add((pred_box.sample_token, match_gt_idx))
 
+            # Since it is a match, update match data also.
+            gt_box_match = gt_boxes[pred_box.sample_token][match_gt_idx]
+
+            #  Only accumulate error metrics for matched boxes
+            if inserted_boxes is not None and gt_box_match.tracking_id not in inserted_boxes[pred_box.sample_token]:
+                continue
+
             #  Update tp, fp and confs.
             tp.append(1)
             fp.append(0)
             conf.append(pred_box.detection_score)
-
-            # Since it is a match, update match data also.
-            gt_box_match = gt_boxes[pred_box.sample_token][match_gt_idx]
 
             match_data['trans_err'].append(center_distance(gt_box_match, pred_box))
             match_data['vel_err'].append(velocity_l2(gt_box_match, pred_box))
@@ -122,6 +129,9 @@ def accumulate(gt_boxes: EvalBoxes,
             fp.append(1)
             conf.append(pred_box.detection_score)
 
+    if inserted_boxes is not None:
+        print("Number of matches with inserted boxes", sum(tp))
+
     # Check if we have any matches. If not, just return a "no predictions" array.
     if len(match_data['trans_err']) == 0:
         return DetectionMetricData.no_predictions()
@@ -130,34 +140,42 @@ def accumulate(gt_boxes: EvalBoxes,
     # Calculate and interpolate precision and recall
     # ---------------------------------------------
 
-    # Accumulate.
-    tp = np.cumsum(tp).astype(float)
-    fp = np.cumsum(fp).astype(float)
-    conf = np.array(conf)
+    if inserted_boxes is not None:
+        # If inserted boxes are present, we do not interpolate precision and recall and just compute the averages.
+        rec = np.linspace(0, 1, DetectionMetricData.nelem)  # 101 steps, from 0% to 100% recall.
+        prec = np.zeros_like(rec)
+        conf = np.array(conf)
+        for key in match_data.keys():
+            match_data[key] = np.array(match_data[key])
+    else:
+        # Accumulate.
+        tp = np.cumsum(tp).astype(float)
+        fp = np.cumsum(fp).astype(float)
+        conf = np.array(conf)
 
-    # Calculate precision and recall.
-    prec = tp / (fp + tp) if inserted_boxes is None else np.zeros_like(tp)
-    rec = tp / float(npos)
+        # Calculate precision and recall.
+        prec = tp / (fp + tp)
+        rec = tp / float(npos)
 
-    rec_interp = np.linspace(0, 1, DetectionMetricData.nelem)  # 101 steps, from 0% to 100% recall.
-    prec = np.interp(rec_interp, rec, prec, right=0)
-    conf = np.interp(rec_interp, rec, conf, right=0)
-    rec = rec_interp
+        rec_interp = np.linspace(0, 1, DetectionMetricData.nelem)  # 101 steps, from 0% to 100% recall.
+        prec = np.interp(rec_interp, rec, prec, right=0)
+        conf = np.interp(rec_interp, rec, conf, right=0)
+        rec = rec_interp
 
-    # ---------------------------------------------
-    # Re-sample the match-data to match, prec, recall and conf.
-    # ---------------------------------------------
+        # ---------------------------------------------
+        # Re-sample the match-data to match, prec, recall and conf.
+        # ---------------------------------------------
 
-    for key in match_data.keys():
-        if key == "conf":
-            continue  # Confidence is used as reference to align with fp and tp. So skip in this step.
+        for key in match_data.keys():
+            if key == "conf":
+                continue  # Confidence is used as reference to align with fp and tp. So skip in this step.
 
-        else:
-            # For each match_data, we first calculate the accumulated mean.
-            tmp = cummean(np.array(match_data[key]))
+            else:
+                # For each match_data, we first calculate the accumulated mean.
+                tmp = cummean(np.array(match_data[key]))
 
-            # Then interpolate based on the confidences. (Note reversing since np.interp needs increasing arrays)
-            match_data[key] = np.interp(conf[::-1], match_data['conf'][::-1], tmp[::-1])[::-1]
+                # Then interpolate based on the confidences. (Note reversing since np.interp needs increasing arrays)
+                match_data[key] = np.interp(conf[::-1], match_data['conf'][::-1], tmp[::-1])[::-1]
 
     # ---------------------------------------------
     # Done. Instantiate MetricData and return
