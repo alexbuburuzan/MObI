@@ -15,6 +15,7 @@ def accumulate(gt_boxes: EvalBoxes,
                class_name: str,
                dist_fcn: Callable,
                dist_th: float,
+               restricted: bool = False,
                inserted_boxes: Optional[Dict[str, Set[str]]] = None,
                verbose: bool = False) -> DetectionMetricData:
     """
@@ -25,6 +26,7 @@ def accumulate(gt_boxes: EvalBoxes,
     :param class_name: Class to compute AP on.
     :param dist_fcn: Distance function used to match detections and ground truths.
     :param dist_th: Distance threshold for a match.
+    :param restricted: If true, only consider matches where the tracking_id is in inserted_boxes.
     :param inserted_boxes: Dictionary {sample_token: {tracking_id}} of inserted boxes. If None, no inserted boxes.
     :param verbose: If true, print debug messages.
     :return: (average_prec, metrics). The average precision value and raw data for a number of metrics.
@@ -34,18 +36,16 @@ def accumulate(gt_boxes: EvalBoxes,
     # Organize input and initialize accumulators.
     # ---------------------------------------------
 
-    # Count the positives and inserted boxes:
-    all_boxes = [gt_box for gt_box in gt_boxes.all if gt_box.detection_name == class_name]
+    # Restrict to the samples that have inserted boxes.
     if inserted_boxes is not None:
-        all_boxes = [gt_box for gt_box in all_boxes if gt_box.tracking_id in inserted_boxes[gt_box.sample_token]]
-    npos = len(all_boxes)
+        gt_boxes.boxes = {token: boxes for token, boxes in gt_boxes.boxes.items() if token in inserted_boxes}
+        pred_boxes.boxes = {token: boxes for token, boxes in pred_boxes.boxes.items() if token in inserted_boxes}
+
+    npos = len([gt_box for gt_box in gt_boxes.all if gt_box.detection_name == class_name])
 
     if verbose:
         print("Found {} GT of class {} out of {} total across {} samples.".
               format(npos, class_name, len(gt_boxes.all), len(gt_boxes.sample_tokens)))
-
-    if inserted_boxes is not None:
-        print(f"Number of GT for class {class_name}", len(all_boxes))
 
     # For missing classes in the GT, return a data structure corresponding to no predictions.
     if npos == 0:
@@ -104,7 +104,7 @@ def accumulate(gt_boxes: EvalBoxes,
             gt_box_match = gt_boxes[pred_box.sample_token][match_gt_idx]
 
             #  Only accumulate error metrics for matched boxes
-            if inserted_boxes is not None and gt_box_match.tracking_id not in inserted_boxes[pred_box.sample_token]:
+            if restricted and gt_box_match.tracking_id not in inserted_boxes[pred_box.sample_token]:
                 continue
 
             #  Update tp, fp and confs.
@@ -123,14 +123,11 @@ def accumulate(gt_boxes: EvalBoxes,
             match_data['attr_err'].append(1 - attr_acc(gt_box_match, pred_box))
             match_data['conf'].append(pred_box.detection_score)
 
-        elif inserted_boxes is None:
+        elif not restricted:
             # No match. Mark this as a false positive.
             tp.append(0)
             fp.append(1)
             conf.append(pred_box.detection_score)
-
-    if inserted_boxes is not None:
-        print("Number of matches with inserted boxes", sum(tp))
 
     # Check if we have any matches. If not, just return a "no predictions" array.
     if len(match_data['trans_err']) == 0:
@@ -140,7 +137,7 @@ def accumulate(gt_boxes: EvalBoxes,
     # Calculate and interpolate precision and recall
     # ---------------------------------------------
 
-    if inserted_boxes is not None:
+    if restricted:
         # If inserted boxes are present, we do not interpolate precision and recall and just compute the averages.
         rec = np.linspace(0, 1, DetectionMetricData.nelem)  # 101 steps, from 0% to 100% recall.
         prec = np.zeros_like(rec)

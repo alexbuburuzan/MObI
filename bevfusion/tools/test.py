@@ -172,7 +172,10 @@ def main():
 
     # build the dataloader
     if args.eval_options is not None and "edited_samples_path" in args.eval_options:
-        dataset = build_dataset(cfg.data.test, dataset_kwargs={"edited_samples_path": args.eval_options["edited_samples_path"]})
+        dataset = build_dataset(cfg.data.test, dataset_kwargs={
+            "edited_samples_path": args.eval_options["edited_samples_path"],
+            "edited_objects_restrict": args.eval_options.get("edited_objects_restrict", 0)
+            })
     else:
         dataset = build_dataset(cfg.data.test)
     data_loader = build_dataloader(

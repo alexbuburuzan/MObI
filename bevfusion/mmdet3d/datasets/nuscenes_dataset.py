@@ -139,10 +139,12 @@ class NuScenesDataset(Custom3DDataset):
         eval_version="detection_cvpr_2019",
         use_valid_flag=False,
         edited_samples_path: Optional[str] = None,
+        edited_objects_restrict: bool = False,
     ) -> None:
         self.load_interval = load_interval
         self.use_valid_flag = use_valid_flag
         self.edited_samples_path = edited_samples_path
+        self.edited_objects_restrict = edited_objects_restrict
         super().__init__(
             dataset_root=dataset_root,
             ann_file=ann_file,
@@ -447,7 +449,7 @@ class NuScenesDataset(Custom3DDataset):
         metric="bbox",
         result_name="pts_bbox",
         edited_samples_path=None,
-        edited_objects_list=None,
+        edited_objects_restrict=None,
     ):
         """Evaluation for a single model in nuScenes protocol.
 
@@ -483,7 +485,8 @@ class NuScenesDataset(Custom3DDataset):
             eval_set=eval_set_map[self.version],
             output_dir=output_dir,
             verbose=False,
-            edited_objects_list=edited_objects_list,
+            edited_samples_path=edited_samples_path,
+            edited_objects_restrict=edited_objects_restrict,
         )
         nusc_eval.main(render_curves=False)
 
@@ -606,14 +609,14 @@ class NuScenesDataset(Custom3DDataset):
                     ret_dict = self._evaluate_single(
                         result_files[name],
                         edited_samples_path=kwargs.get("edited_samples_path", None),
-                        edited_objects_list=kwargs.get("edited_objects_list", None),
+                        edited_objects_restrict=kwargs.get("edited_objects_restrict", None) == 1,
                     )
                 metrics.update(ret_dict)
             elif isinstance(result_files, str):
                 metrics.update(self._evaluate_single(
                     result_files,
                     edited_samples_path=kwargs.get("edited_samples_path", None),
-                    edited_objects_list=kwargs.get("edited_objects_list", None),
+                    edited_objects_restrict=kwargs.get("edited_objects_restrict", None) == 1,
                 ))
 
             if tmp_dir is not None:
