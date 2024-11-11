@@ -78,13 +78,14 @@ class NuScenesDataset(data.Dataset):
         min_lidar_points=64,
         rot_every_angle=0,
         rot_test_scene=None, # used for rotation test
-        rot_test_bbox_shift=[3, -10, -1.5],
+        rot_test_bbox_coord=[2, -6, -1.25],
         use_lidar=False,
         use_camera=True,
         random_range_crop=False,
         num_samples_per_class=None,
         prob_erase_box=0,
         fixed_sampling=True,
+        sample_each_frame=False,
         return_original_image=False,
         range_object_norm=True,
         range_object_norm_scale=0.75,
@@ -100,7 +101,7 @@ class NuScenesDataset(data.Dataset):
         self.prob_use_3d_edit_mask = prob_use_3d_edit_mask
         self.prob_drop_context = prob_drop_context
         self.rot_test_scene = rot_test_scene
-        self.rot_test_bbox_shift = rot_test_bbox_shift
+        self.rot_test_bbox_coord = np.array(rot_test_bbox_coord)
         self.use_lidar = use_lidar
         self.use_camera = use_camera
         self.random_range_crop = random_range_crop
@@ -149,7 +150,7 @@ class NuScenesDataset(data.Dataset):
         ]
 
         if specific_object is None:
-            if object_meta_dump_path is None:
+            if sample_each_frame is False:
                 # Select an object from each class when testing
                 if num_samples_per_class is not None and fixed_sampling:
                     self.objects_meta = self.objects_meta_all.groupby("object_class").apply(
@@ -182,16 +183,6 @@ class NuScenesDataset(data.Dataset):
                 # Concatenate to ensure all scenes are represented
                 self.objects_meta = pd.concat([self.objects_meta, missing_scene_objects])
                 self.objects_meta_all = pd.concat([self.objects_meta_all, missing_scene_objects])
-
-                object_meta_dump = {
-                    row["scene_token"]: row["track_id"]
-                    for _, row in self.objects_meta.iterrows()
-                }
-
-                os.makedirs(os.path.dirname(object_meta_dump_path), exist_ok=True)
-                with open(object_meta_dump_path, "w") as f:
-                    json.dump(object_meta_dump, f)
-
                 self.num_samples_per_class = None
 
             self.objects_meta = self.objects_meta.reset_index(drop=True)
@@ -202,11 +193,23 @@ class NuScenesDataset(data.Dataset):
             track_id = name_parts[1].split("-")[1]
             timestamp = int(name_parts[2].split("-")[1])
 
-            self.objects_meta = self.objects_meta_all[
-                ((self.objects_meta_all["track_id"] == track_id) &
-                 (self.objects_meta_all["scene_token"] == scene_token) &
-                 (self.objects_meta_all["timestamp"] == timestamp))
+            self.objects_meta = self.objects_meta_orig[
+                ((self.objects_meta_orig["track_id"] == track_id) &
+                 (self.objects_meta_orig["scene_token"] == scene_token) &
+                 (self.objects_meta_orig["timestamp"] == timestamp))
             ]
+            self.num_samples_per_class = None
+
+        # dump objects
+        if object_meta_dump_path is not None:
+            object_meta_dump = {
+                row["scene_token"]: row["track_id"]
+                for _, row in self.objects_meta.iterrows()
+            }
+
+            os.makedirs(os.path.dirname(object_meta_dump_path), exist_ok=True)
+            with open(object_meta_dump_path, "w") as f:
+                json.dump(object_meta_dump, f)
 
         self.idx_lists = []
         self.idx_lists_erase = []
@@ -224,6 +227,8 @@ class NuScenesDataset(data.Dataset):
                 [self.objects_meta] * len(angles), ignore_index=True
             )
             self.objects_meta["bbox_rot_angle"] = np.repeat(angles, len(self.objects_meta) // len(angles))
+            if self.num_samples_per_class is not None:
+                self.num_samples_per_class *= len(angles)
 
         with open(scene_database_path, "rb") as f:
             self.scenes_info = pickle.load(f)
@@ -269,7 +274,7 @@ class NuScenesDataset(data.Dataset):
         if self.rot_test_scene is None:
             bbox_3d = scene_info["gt_bboxes_3d_corners"][object_meta["scene_obj_idx"]]
         else:
-            bbox_3d = translate_bbox(ref_bbox_3d, self.rot_test_bbox_shift)
+            bbox_3d = translate_bbox(ref_bbox_3d, self.rot_test_bbox_coord)
 
         bbox_rot_angle = object_meta.get("bbox_rot_angle", 0)
         bbox_3d = rotate_bbox(bbox_3d, bbox_rot_angle)
