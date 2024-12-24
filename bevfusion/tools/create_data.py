@@ -40,6 +40,7 @@ def nuscenes_data_prep(root_path,
                        out_dir,
                        pbe_database,
                        workers,
+                       split,
                        max_sweeps=10):
     """Prepare data related to nuScenes dataset.
 
@@ -62,47 +63,27 @@ def nuscenes_data_prep(root_path,
         root_path, info_prefix, version=version, max_sweeps=max_sweeps
     )
 
-    info_train_path = osp.join(root_path, f'{info_prefix}_infos_train.pkl')
-    info_val_path = osp.join(root_path, f'{info_prefix}_infos_val.pkl')
+    info_path = osp.join(root_path, f'{info_prefix}_infos_{split}.pkl')
 
+    print("Exporting 2d annotations")
     nuscenes_converter.export_2d_annotation(
-        root_path, info_train_path, version=version
-    )
-    nuscenes_converter.export_2d_annotation(
-        root_path, info_val_path, version=version
+        root_path, info_path, version=version
     )
     if not pbe_database:
         create_groundtruth_database(
             dataset_name,
             root_path,
             info_prefix,
-            f'{out_dir}/{info_prefix}_infos_train.pkl',
-            split='train',
-        )
-        create_groundtruth_database(
-            dataset_name,
-            root_path,
-            info_prefix,
-            f'{out_dir}/{info_prefix}_infos_val.pkl',
-            split='val',
+            f'{out_dir}/{info_prefix}_infos_{split}.pkl',
+            split=split,
         )
     else:
         create_pbe_database(
             dataset_name,
             root_path,
             info_prefix,
-            f'{out_dir}/{info_prefix}_infos_train.pkl',
-            split='train',
-            version=version,
-            workers=workers,
-            max_sweeps=max_sweeps,
-        )
-        create_pbe_database(
-            dataset_name,
-            root_path,
-            info_prefix,
-            f'{out_dir}/{info_prefix}_infos_val.pkl',
-            split='val',
+            f'{out_dir}/{info_prefix}_infos_{split}.pkl',
+            split=split,
             version=version,
             workers=workers,
             max_sweeps=max_sweeps,
@@ -220,7 +201,10 @@ def waymo_data_prep(root_path,
 
 
 parser = argparse.ArgumentParser(description='Data converter arg parser')
-parser.add_argument('dataset', metavar='kitti', help='name of the dataset')
+parser.add_argument(
+    'dataset',
+    metavar='kitti',
+    help='name of the dataset')
 parser.add_argument(
     '--root-path',
     type=str,
@@ -244,12 +228,26 @@ parser.add_argument(
     default='./data/kitti',
     required='False',
     help='name of info pkl')
-parser.add_argument('--extra-tag', type=str, default='kitti')
 parser.add_argument(
-    "--pbe-database", action="store_true", help="whether to generate pbe database"
-)
+    '--extra-tag',
+    type=str,
+    default='kitti')
 parser.add_argument(
-    '--workers', type=int, default=4, help='number of threads to be used')
+    "--pbe-database",
+    action="store_true",
+    help="whether to generate pbe database")
+parser.add_argument(
+    '--workers',
+    type=int,
+    default=4,
+    help='number of threads to be used')
+parser.add_argument(
+    '--split',
+    type=str,
+    choices=['train', 'val'],
+    default='train',
+    help="specify the dataset split: 'train' or 'val' - for nuscenes only")
+
 args = parser.parse_args()
 
 if __name__ == '__main__':
@@ -269,16 +267,7 @@ if __name__ == '__main__':
             out_dir=args.out_dir,
             pbe_database=args.pbe_database,
             workers=args.workers,
-            max_sweeps=args.max_sweeps)
-        test_version = f'{args.version}-test'
-        nuscenes_data_prep(
-            root_path=args.root_path,
-            info_prefix=args.extra_tag,
-            version=test_version,
-            dataset_name='NuScenesDataset',
-            out_dir=args.out_dir,
-            pbe_database=args.pbe_database,
-            workers=args.workers,
+            split=args.split,
             max_sweeps=args.max_sweeps)
     elif args.dataset == 'nuscenes' and args.version == 'v1.0-mini':
         train_version = f'{args.version}'
@@ -290,6 +279,7 @@ if __name__ == '__main__':
             out_dir=args.out_dir,
             pbe_database=args.pbe_database,
             workers=args.workers,
+            split=args.split,
             max_sweeps=args.max_sweeps)
     # elif args.dataset == 'lyft':
     #     train_version = f'{args.version}-train'
