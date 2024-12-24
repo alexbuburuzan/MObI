@@ -20,6 +20,14 @@ object_area_crop: 0.2
 classes:
   - car
   - pedestrian
+  # - traffic_cone
+  # - truck
+  # - construction_vehicle
+  # - bus
+  # - trailer
+  # - barrier
+  # - motorcycle
+  # - bicycle
 
 conditions:
   - ref_image
