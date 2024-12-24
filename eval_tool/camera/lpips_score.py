@@ -43,8 +43,8 @@ class ImagePathsDataset(torch.utils.data.Dataset):
         return len(self.files_target)
 
     def __getitem__(self, i):
-        patch_target = self.transforms(Image.open(self.files_target[i]))
-        patch_pred = self.transforms(Image.open(self.files_pred[i]))
+        patch_target = self.transforms(Image.open(self.files_target[i]).convert('RGB'))
+        patch_pred = self.transforms(Image.open(self.files_pred[i]).convert('RGB'))
 
         return patch_target, patch_pred
 

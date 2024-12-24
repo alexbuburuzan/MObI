@@ -3,6 +3,7 @@ import cv2
 import torch
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from omegaconf import OmegaConf
 from PIL import Image
 from tqdm import tqdm
@@ -330,7 +331,7 @@ def main():
                 all_samples = list()
                 for batch in tqdm(test_dataloader):
                     if opt.rotation_test:
-                        # diffusion models are highly sensitive to the initial noise
+                        # diffusion models are generally sensitive to the initial noise
                         # this should help with consistency
                         seed_everything(opt.seed)
 
@@ -397,7 +398,7 @@ def main():
                                 grid_vis_no_box = pred_grid_no_box[i].transpose(1, 2, 0)[..., ::-1]
                                 vis = np.concatenate([grid_vis, grid_vis_no_box], axis=1)
                                 os.makedirs(os.path.join(camera_path, "grid"), exist_ok=True)
-                                cv2.imwrite(os.path.join(camera_path, "grid", segment_id_batch[i] + f'_grid_seed{opt.seed}.png'), vis)
+                                cv2.imwrite(os.path.join(camera_path, "grid", segment_id_batch[i] + f'_grid_seed{opt.seed}.jpg'), vis)
 
                             if opt.save_samples:
                                 patch_pred = log["image_sample"][[i]]
@@ -428,7 +429,7 @@ def main():
                                 image_pred[top:top+crop_H, left:left+crop_W] = patch_pred
                                 if opt.copy_paste:
                                     image_pred[y1:y2, x1:x2, :] = cv2.resize(object_ref, (x2 - x1, y2 - y1))
-                                    mask_convolved = mask
+                                    mask_convolved =  cv2.dilate(mask, np.ones((5, 5), np.uint8), iterations=1)
                                 else:
                                     mask_convolved = cv2.GaussianBlur(mask, (15, 15), 7.0)
 
@@ -455,17 +456,39 @@ def main():
                             if opt.save_visualisations:
                                 pcd_vis = log["lidar_input-pred-rec"][i].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
                                 os.makedirs(os.path.join(lidar_path, "point_clouds"), exist_ok=True)
-                                cv2.imwrite(os.path.join(lidar_path, "point_clouds", segment_id_batch[i] + f'_grid_pc_seed{opt.seed}.png'), pcd_vis)
+                                cv2.imwrite(os.path.join(lidar_path, "point_clouds", segment_id_batch[i] + f'_grid_pc_seed{opt.seed}.jpg'), pcd_vis)
+
+                                # Range depth
+                                os.makedirs(os.path.join(lidar_path, "range_depth_collage"), exist_ok=True)
+                                os.makedirs(os.path.join(lidar_path, "range_depth_pred"), exist_ok=True)
+                                os.makedirs(os.path.join(lidar_path, "range_depth_target"), exist_ok=True)
 
                                 range_depth_vis = log["range_depth_pred"][i].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
                                 range_depth_vis = ((range_depth_vis + 1.0) / 2.0 * 255).astype(np.uint8)
-                                os.makedirs(os.path.join(lidar_path, "range_depth"), exist_ok=True)
-                                cv2.imwrite(os.path.join(lidar_path, "range_depth", segment_id_batch[i] + f'_grid_depth_seed{opt.seed}.png'), range_depth_vis)
+
+                                base_size = range_depth_vis.shape[1]
+                                img_depth_pred = range_depth_vis[base_size * 3 : base_size * 4]
+                                img_depth_target = range_depth_vis[:base_size]
+                                range_depth_vis = (plt.cm.magma(range_depth_vis[..., 0] / 255)[:, :, :3] * 255).astype(np.uint8)[..., ::-1]
+
+                                cv2.imwrite(os.path.join(lidar_path, "range_depth_collage", segment_id_batch[i] + f'_grid_depth_seed{opt.seed}.jpg'), range_depth_vis)
+                                cv2.imwrite(os.path.join(lidar_path, "range_depth_pred", segment_id_batch[i] + f"_seed{opt.seed}.png"), img_depth_pred)
+                                cv2.imwrite(os.path.join(lidar_path, "range_depth_target", segment_id_batch[i] + f"_seed{opt.seed}.png"), img_depth_target)
+
+                                # Range intensity
+                                os.makedirs(os.path.join(lidar_path, "range_intensity_collage"), exist_ok=True)
+                                os.makedirs(os.path.join(lidar_path, "range_intensity_pred"), exist_ok=True)
+                                os.makedirs(os.path.join(lidar_path, "range_intensity_target"), exist_ok=True)
 
                                 range_int_vis = log["range_int_pred"][i].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
                                 range_int_vis = ((range_int_vis + 1.0) / 2.0 * 255).astype(np.uint8)
-                                os.makedirs(os.path.join(lidar_path, "range_intensity"), exist_ok=True)
-                                cv2.imwrite(os.path.join(lidar_path, "range_intensity", segment_id_batch[i] + f'_grid_intensity_seed{opt.seed}.png'), range_int_vis)
+
+                                img_intensity_pred = range_int_vis[base_size * 3 : base_size * 4]
+                                img_intensity_target = range_int_vis[:base_size]
+
+                                cv2.imwrite(os.path.join(lidar_path, "range_intensity_collage", segment_id_batch[i] + f'_grid_intensity_seed{opt.seed}.jpg'), range_int_vis)
+                                cv2.imwrite(os.path.join(lidar_path, "range_intensity_pred", segment_id_batch[i] + f"_seed{opt.seed}.png"), img_intensity_pred)
+                                cv2.imwrite(os.path.join(lidar_path, "range_intensity_target", segment_id_batch[i] + f"_seed{opt.seed}.png"), img_intensity_target)
 
                         if opt.save_samples:
                             pitch = batch['lidar']["range_pitch"].cpu().numpy()

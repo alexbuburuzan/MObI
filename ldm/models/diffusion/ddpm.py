@@ -1623,6 +1623,10 @@ class LatentDiffusion(DDPM):
                 "cond_adapter" in name or
                 "lidar" in name or 
                 "cross_modal" in name
+                # "attn1" in name or
+                # "attn2" in name or
+                # "norm1" in name or
+                # "norm2" in name
             ):
                 params.append(param)
                 param_names.append(name)
@@ -1684,6 +1688,10 @@ class DiffusionWrapper(pl.LightningModule):
                 "cond_adapter" in name or
                 "lidar" in name or 
                 "cross_modal" in name
+                # "attn1" in name or
+                # "attn2" in name or
+                # "norm1" in name or
+                # "norm2" in name
             ):
                 param.requires_grad = True
             else:

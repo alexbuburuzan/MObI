@@ -78,7 +78,8 @@ class NuScenesDataset(data.Dataset):
         min_lidar_points=64,
         rot_every_angle=0,
         rot_test_scene=None, # used for rotation test
-        rot_test_bbox_coord=[2, -6, -1.25],
+        rot_test_cam_idx=3,
+        rot_test_bbox_coord=[3, -10, -1.5],
         use_lidar=False,
         use_camera=True,
         random_range_crop=False,
@@ -101,6 +102,7 @@ class NuScenesDataset(data.Dataset):
         self.prob_use_3d_edit_mask = prob_use_3d_edit_mask
         self.prob_drop_context = prob_drop_context
         self.rot_test_scene = rot_test_scene
+        self.rot_test_cam_idx = rot_test_cam_idx
         self.rot_test_bbox_coord = np.array(rot_test_bbox_coord)
         self.use_lidar = use_lidar
         self.use_camera = use_camera
@@ -263,7 +265,7 @@ class NuScenesDataset(data.Dataset):
 
         if self.rot_test_scene is not None:
             scene_info = self.scenes_info[self.rot_test_scene]
-            cam_idx = 3
+            cam_idx = self.rot_test_cam_idx
         else:
             scene_info = self.scenes_info[object_meta["scene_token"]]
             cam_idx = object_meta["cam_idx"]
