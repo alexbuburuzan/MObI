@@ -264,7 +264,7 @@ def check_erase_bbox(gt_bboxes_3d):
 
     # Last box is the erase box
     box_coll_mat = box_collision_test(gt_bboxes_bev, gt_bboxes_bev)
-    frustum_coll_mat = frustum_collision_test(gt_frustums[:-1], gt_frustums[[-1]])
+    frustum_coll_mat = frustum_collision_test(gt_frustums[:-1], gt_frustums[[-1]], thresh=0.5)
 
     coll_mat = np.logical_or(box_coll_mat, frustum_coll_mat)
     diag = np.arange(gt_bboxes_3d.shape[0])
@@ -305,7 +305,7 @@ def create_groundtruth_database(
         max_sweeps (int): Number of additional LiDAR sweeps.
             Default: 0
     """
-    print(f"Create GT Database of {dataset_class_name} {split} set")
+    print(f"Create PbE Database of {dataset_class_name} {split} set | workers {workers}")
     dataset_cfg = dict(
         type=dataset_class_name, dataset_root=data_path, ann_file=info_path)
 
