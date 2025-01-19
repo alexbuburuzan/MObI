@@ -65,11 +65,12 @@ def nuscenes_data_prep(root_path,
 
     info_path = osp.join(root_path, f'{info_prefix}_infos_{split}.pkl')
 
-    print("Exporting 2d annotations")
-    nuscenes_converter.export_2d_annotation(
-        root_path, info_path, version=version
-    )
     if not pbe_database:
+        print("Exporting 2d annotations")
+        nuscenes_converter.export_2d_annotation(
+            root_path, info_path, version=version
+        )
+
         create_groundtruth_database(
             dataset_name,
             root_path,
