@@ -264,7 +264,7 @@ def check_erase_bbox(gt_bboxes_3d):
 
     # Last box is the erase box
     box_coll_mat = box_collision_test(gt_bboxes_bev, gt_bboxes_bev)
-    frustum_coll_mat = frustum_collision_test(gt_frustums[:-1], gt_frustums[[-1]], thresh=0.5)
+    frustum_coll_mat = frustum_collision_test(gt_frustums[:-1], gt_frustums[[-1]])
 
     coll_mat = np.logical_or(box_coll_mat, frustum_coll_mat)
     diag = np.arange(gt_bboxes_3d.shape[0])
