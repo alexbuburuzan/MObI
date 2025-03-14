@@ -19,13 +19,11 @@ from omegaconf import OmegaConf
 # Seed everything for reproducibility
 seed_everything(41)
 
-conf = OmegaConf.load("configs/nusc_control_multimodal.yaml")
+conf = OmegaConf.load("configs/mobi_nusc_512.yaml")
 data_config = conf["data"]["params"]["train"]
 
 # Initialize the dataset
-dataset = NuScenesDataset(**data_config["params"])
-
-print(len(dataset))
+dataset = NuScenesDataset(return_original_image=True, **data_config["params"])
 
 dump_dir = "dump"
 os.makedirs(dump_dir, exist_ok=True)
@@ -95,3 +93,39 @@ for i in trange(len(dataset)):
     cv2.imwrite(os.path.join(dump_dir, f"image_{id_name}.png"), img_vis)
     cv2.imwrite(os.path.join(dump_dir, f"image_inpaint_{id_name}.png"), img_inpaint_vis)
     cv2.imwrite(os.path.join(dump_dir, f"image_ref_{id_name}.png"), ref_img)
+
+    lidar_converter = LidarConverter()
+    pitch = sample['lidar']["range_pitch"]
+    yaw = sample['lidar']["range_yaw"]
+    range_data = sample["lidar"]["range_depth_orig"] # 32 x 1096
+    points_orig, _, _ = lidar_converter.range2pcd(range_data, pitch, yaw, range_data)
+    lidar2image = sample["image"]["orig"]["lidar2image"]  # but in your case it's actually "lidar2image"
+    image = sample["image"]["orig"]["image"].numpy()       # shape (H, W, 3)
+
+    # 2) Convert LiDAR points to homogeneous coordinates
+    N = points_orig.shape[0]
+    points = np.concatenate([points_orig, np.ones((N, 1), dtype=np.float32)], axis=1)  # (N, 4)
+    points_img = points @ lidar2image.T
+
+    points_img = points_img[(points_img[:, 2] > 0)]
+    points_img[..., 2] = np.clip(points_img[..., 2], a_min=1e-5, a_max=1e5)            
+    points_img[..., :2] /= points_img[..., 2, None]
+
+    _, H, W = image.shape
+    valid_mask = (
+        (points_img[:, 0] >= 0) & (points_img[:, 0] < W) &
+        (points_img[:, 1] >= 0) & (points_img[:, 1] < H)
+    )
+    points_img = points_img[valid_mask]
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+    image = image.transpose((1, 2, 0))
+    image = (image + 1) / 2
+    ax.imshow(image)
+    sc = ax.scatter(points_img[:, 0], points_img[:, 1], c=points_img[:, 2], s=2, cmap='turbo')
+    plt.axis("off")
+
+    # --- Save the output figure to a file ---
+    output_path = os.path.join(dump_dir, f"overlay_img_pc_{id_name}.png")
+    plt.savefig(output_path, bbox_inches='tight', dpi=200)
+    plt.close(fig)

@@ -134,7 +134,7 @@ class NuScenesDataset(data.Dataset):
              (self.objects_meta_orig["min_distance"] > 1.4))
         ]
 
-        # Aply additional filters
+        # Apply additional filters
         self.objects_meta_all = self.objects_meta_orig[
             ((self.objects_meta_orig["reference_image_h"] >= reference_image_min_h) &
              (self.objects_meta_orig["reference_image_h"] <= reference_image_max_h) &
@@ -189,7 +189,7 @@ class NuScenesDataset(data.Dataset):
 
             self.objects_meta = self.objects_meta.reset_index(drop=True)
         else:
-            # sample-d9e3f6344b764bf383485c83fe272f92_track-ee8e111f86fe4e8abe620e5abb19e4a7_time-1538984834447585_pedestrian_id-ref_rot-0_grid_seed42
+            # eg format: sample-d9e3f6344b764bf383485c83fe272f92_track-ee8e111f86fe4e8abe620e5abb19e4a7_time-1538984834447585_pedestrian_id-ref_rot-0_grid_seed42
             name_parts = specific_object.split("_")
             scene_token = name_parts[0].split("-")[1]
             track_id = name_parts[1].split("-")[1]
@@ -588,6 +588,7 @@ class NuScenesDataset(data.Dataset):
                 "mask": image_mask_orig,
                 "file_name": image_path.split("/")[-1],
                 "cam_type": cam_type,
+                "lidar2image": lidar2image,
             }
 
         return data

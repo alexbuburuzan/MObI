@@ -62,6 +62,96 @@ def numpy_to_pil(images):
     return pil_images
 
 
+def overlay_lidar_on_image(
+    points_orig: np.ndarray,
+    lidar2image: np.ndarray,
+    image: np.ndarray,
+    output_path: str,
+    scale_image: bool = False,
+    clip_values: tuple = (1e-5, 1e5),
+    point_size: int = 2,
+    cmap_name: str = "turbo"
+):
+    """
+    Projects LiDAR points onto an image using a precomputed lidar2image matrix
+    and saves the overlay visualization to 'output_path'.
+
+    Parameters
+    ----------
+    points_orig : np.ndarray
+        (N, 3) array of LiDAR points (X, Y, Z).
+    lidar2image : np.ndarray
+        (4, 4) or (3, 4) projection matrix from LiDAR frame to image space.
+        Typically 4x4 with last row [0, 0, 0, 1].
+    image : np.ndarray
+        (H, W, 3) NumPy image, or (3, H, W) if channels-first. 
+        If channels-first, it must be transposed beforehand 
+        or inside this function.
+    output_path : str
+        File path to save the resulting overlay (e.g. 'overlay.png').
+    scale_image : bool
+        If True, assume 'image' might be in [-1,1] range and rescale 
+        to [0,1]. Set False if your image is already in [0,1] or [0,255].
+    clip_values : tuple
+        Clipping range for the Z dimension after projection (avoid /0 issues).
+    point_size : int
+        Marker size in the scatter plot.
+    cmap_name : str
+        Name of matplotlib colormap (e.g. 'turbo', 'jet', 'viridis').
+
+    Returns
+    -------
+    None
+    """
+    N = points_orig.shape[0]
+    points_hom = np.concatenate([points_orig, np.ones((N, 1), dtype=np.float32)], axis=1)  # (N, 4)
+    points_img = points_hom @ lidar2image.T  # shape (N, 4)
+
+    # Filter out points
+    valid_z_mask = points_img[:, 2] > 0
+    points_img = points_img[valid_z_mask]
+    z_min, z_max = clip_values
+    points_img[:, 2] = np.clip(points_img[:, 2], a_min=z_min, a_max=z_max)
+
+    # Convert to pixel coords: (X / Z, Y / Z)
+    points_img[:, 0] /= points_img[:, 2]  # u
+    points_img[:, 1] /= points_img[:, 2]  # v
+
+    # Require (H, W, 3)
+    if image.ndim == 3 and image.shape[0] == 3 and len(image.shape) == 3:
+        image = image.transpose((1, 2, 0))  # -> (H, W, 3)
+
+    H, W, _ = image.shape
+    image = image[..., ::-1]
+
+    # Filter out points that lie outside the image boundaries
+    valid_mask = (
+        (points_img[:, 0] >= 0) & (points_img[:, 0] < W) &
+        (points_img[:, 1] >= 0) & (points_img[:, 1] < H)
+    )
+    points_img = points_img[valid_mask]
+
+    if scale_image:
+        image = (image + 1.0) / 2.0
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(12, 8))
+    ax.imshow(image)
+    sc = ax.scatter(
+        points_img[:, 0],
+        points_img[:, 1],
+        c=points_img[:, 2],  # color by 'Z' after projection
+        s=point_size,
+        cmap=cmap_name
+    )
+
+    # Save figure
+    plt.axis("off")
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    plt.savefig(output_path, bbox_inches='tight', dpi=200)
+    plt.close(fig)
+
+
 def load_model_from_config(config, ckpt, verbose=False):
     print(f"Loading model from {ckpt}")
     pl_sd = torch.load(ckpt, map_location="cpu")
@@ -389,10 +479,10 @@ def main():
                     log, lidar_metrics = model.log_data(batch, data, h_camera, h_lidar, log_metrics=False, return_sample=opt.save_samples, split="test")
                     num_samples = len(batch["bbox_3d"])
 
-                    if model.use_camera:
-                        pred_grid = log["image_preds"].cpu().numpy()
-                        pred_grid_no_box = log["image_preds_no_box"].cpu().numpy()
-                        for i in range(num_samples):
+                    for i in range(num_samples):
+                        if model.use_camera:
+                            pred_grid = log["image_preds"].cpu().numpy()
+                            pred_grid_no_box = log["image_preds_no_box"].cpu().numpy()
                             if opt.save_visualisations:
                                 grid_vis = pred_grid[i].transpose(1, 2, 0)[..., ::-1]
                                 grid_vis_no_box = pred_grid_no_box[i].transpose(1, 2, 0)[..., ::-1]
@@ -451,8 +541,7 @@ def main():
                                 cv2.imwrite(os.path.join(camera_path, "patch_gt", f"{segment_id_batch[i]}_gt_seed{opt.seed}.png"), patch_gt)
                                 cv2.imwrite(os.path.join(camera_path, "patch_pred", f"{segment_id_batch[i]}_pred_seed{opt.seed}.png"), composited_patch_pred)
 
-                    if model.use_lidar:
-                        for i in range(num_samples):
+                        if model.use_lidar:
                             if opt.save_visualisations:
                                 pcd_vis = log["lidar_input-pred-rec"][i].cpu().numpy().transpose(1, 2, 0)[..., ::-1]
                                 os.makedirs(os.path.join(lidar_path, "point_clouds"), exist_ok=True)
@@ -490,21 +579,20 @@ def main():
                                 cv2.imwrite(os.path.join(lidar_path, "range_intensity_pred", segment_id_batch[i] + f"_seed{opt.seed}.png"), img_intensity_pred)
                                 cv2.imwrite(os.path.join(lidar_path, "range_intensity_target", segment_id_batch[i] + f"_seed{opt.seed}.png"), img_intensity_target)
 
-                        if opt.save_samples:
-                            pitch = batch['lidar']["range_pitch"].cpu().numpy()
-                            yaw = batch['lidar']["range_yaw"].cpu().numpy()
+                            if opt.save_samples:
+                                pitch = batch['lidar']["range_pitch"].cpu().numpy()
+                                yaw = batch['lidar']["range_yaw"].cpu().numpy()
 
-                            range_sample_depth, range_sample_int = postprocess_range_depth_int(
-                                range_depth=log["range_sample_depth"],
-                                range_depth_orig=batch["lidar"]["range_depth_orig"],
-                                range_int=log["range_sample_int"],
-                                range_int_orig=batch["lidar"]["range_int_orig"],
-                                crop_left=batch["lidar"]["range_shift_left"],
-                                width_crop=batch["lidar"]["width_crop"],
-                            )
+                                range_sample_depth, range_sample_int = postprocess_range_depth_int(
+                                    range_depth=log["range_sample_depth"],
+                                    range_depth_orig=batch["lidar"]["range_depth_orig"],
+                                    range_int=log["range_sample_int"],
+                                    range_int_orig=batch["lidar"]["range_int_orig"],
+                                    crop_left=batch["lidar"]["range_shift_left"],
+                                    width_crop=batch["lidar"]["width_crop"],
+                                )
 
-                            lidar_converter = LidarConverter()
-                            for i in range(num_samples):
+                                lidar_converter = LidarConverter()
                                 bbox_3d = batch["bbox_3d"][[i]].cpu().numpy()
                                 gt_instance_mask = batch["lidar"]["range_instance_mask_orig"][i].cpu().numpy()
                                 file_name = batch["lidar"]["file_name"][i]
@@ -513,6 +601,8 @@ def main():
                                 pred_instance_mask = np.zeros(np.prod(gt_instance_mask.shape))
                                 label = np.arange(0, np.prod(gt_instance_mask.shape)).reshape(gt_instance_mask.shape)
                                 points, points_label, _ = lidar_converter.range2pcd(range_sample_depth[i], pitch[i], yaw[i], label)
+
+                                points_orig, _, _ = lidar_converter.range2pcd(batch["lidar"]["range_depth_orig"][i].cpu().numpy(), pitch[i], yaw[i], label)
 
                                 object_points = points_in_bbox_corners(points, bbox_3d)
                                 object_pixels = points_label[object_points[:, 0]]
@@ -548,10 +638,33 @@ def main():
                                 np.save(os.path.join(lidar_path, "range_orig", segment_id_batch[i] + f'_range_orig_seed{opt.seed}.npy'), range_orig)
 
                                 # create edited point cloud
-                                points_coord, points_int, beam_index = lidar_converter.range2pcd(range_depth_final, pitch[i], yaw[i], range_int_final)
-                                pred_points = np.concatenate([points_coord, points_int[:, None], beam_index[:, None]], axis=1)
+                                points_coord_pred, points_int, beam_index = lidar_converter.range2pcd(range_depth_final, pitch[i], yaw[i], range_int_final)
+                                pred_points = np.concatenate([points_coord_pred, points_int[:, None], beam_index[:, None]], axis=1)
 
                                 np.save(os.path.join(sample_path, file_name), pred_points)
+
+                                os.makedirs(os.path.join(lidar_path, "range_orig"), exist_ok=True)
+
+                                if model.use_camera:
+                                    lidar2image = batch["image"]["orig"]["lidar2image"][i].cpu().numpy()
+                                    os.makedirs(os.path.join(lidar_path, "overlay_orig"), exist_ok=True)
+                                    orig_output_path = os.path.join(lidar_path, "overlay_orig", f"{segment_id_batch[i]}.png")
+                                    overlay_lidar_on_image(
+                                        points_orig,
+                                        lidar2image,
+                                        image.astype(np.uint8),
+                                        output_path=orig_output_path,
+                                    )
+
+                                    # Visualise & save edited
+                                    os.makedirs(os.path.join(lidar_path, "overlay_pred"), exist_ok=True)
+                                    pred_output_path = os.path.join(lidar_path, "overlay_pred", f"{segment_id_batch[i]}.png")
+                                    overlay_lidar_on_image(
+                                        points_coord_pred,
+                                        lidar2image,
+                                        image_recon.astype(np.uint8),
+                                        output_path=pred_output_path,
+                                    )
 
                         for k, v in lidar_metrics.items():
                             if k not in metrics:
