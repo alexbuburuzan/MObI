@@ -7,6 +7,39 @@ from ldm.data.lidar_converter import LidarConverter
 from torchvision.transforms import Resize
 import torch.nn.functional as F
 
+def make_random_irregular_mask(
+    shape=(512, 512),
+    max_angle=4,
+    max_len=100, 
+    max_width=20,
+    min_times=0,
+    max_times=30,
+):
+    """Generate a random irregular mask."""
+    height, width = shape
+    mask = np.zeros((height, width), np.float32)
+    times = np.random.randint(min_times, max_times + 1)
+    
+    for i in range(times):
+        start_x = np.random.randint(width)
+        start_y = np.random.randint(height)
+        
+        for j in range(1 + np.random.randint(5)):
+            angle = 0.01 + np.random.randint(max_angle)
+            if i % 2 == 0:
+                angle = 2 * np.pi - angle
+            length = 10 + np.random.randint(max_len)
+            brush_w = 5 + np.random.randint(max_width)
+            
+            end_x = np.clip((start_x + length * np.sin(angle)).astype(np.int32), 0, width)
+            end_y = np.clip((start_y + length * np.cos(angle)).astype(np.int32), 0, height)
+            
+            cv2.line(mask, (start_x, start_y), (end_x, end_y), 1.0, brush_w)
+            start_x, start_y = end_x, end_y
+    
+    mask = 1. - torch.tensor(mask > 0.5).float()
+    return mask
+
 
 def get_image_coords(bbox_corners, lidar2image, include_depth=False):
     """
