@@ -202,12 +202,12 @@ def check_safety(x_image):
 
 
 def move_to_device(batch, device):
-        for k in batch:
-            if isinstance(batch[k], torch.Tensor):
-                batch[k] = batch[k].to(device)
-            elif isinstance(batch[k], dict):
-                batch[k] = move_to_device(batch[k], device)
-        return batch
+    for k in batch:
+        if isinstance(batch[k], torch.Tensor):
+            batch[k] = batch[k].to(device)
+        elif isinstance(batch[k], dict):
+            batch[k] = move_to_device(batch[k], device)
+    return batch
 
 
 def main():

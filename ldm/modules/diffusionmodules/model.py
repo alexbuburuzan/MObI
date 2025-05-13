@@ -614,8 +614,8 @@ class Decoder(nn.Module):
 
         if self.lidar_adapter:
             h = self.res_block_lidar1(h, temb)
-            h = self.norm_out_lidar1(h)
-            h = nonlinearity(h)
+            h = self.norm_out_lidar1(h) # should be removed together with the next line, this is a small mistake
+            h = nonlinearity(h) # this
             h = self.res_block_lidar2(h, temb)
             h = self.norm_out_lidar2(h)
             h = nonlinearity(h)
