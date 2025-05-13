@@ -60,7 +60,8 @@ class DetectionEval:
                  eval_set: str,
                  output_dir: str = None,
                  verbose: bool = True,
-                 edited_objects_list: str = None) -> None:
+                 edited_samples_path: str = None,
+                 edited_objects_restrict: bool = False) -> None:
         """
         Initialize a DetectionEval object.
         :param nusc: A NuScenes object.
@@ -105,11 +106,15 @@ class DetectionEval:
             "Samples in split doesn't match samples in predictions."
 
         # Load list of edited boxes if provided
-        if edited_objects_list is not None:
-            with open(edited_objects_list, 'r') as f:
+        if edited_samples_path is not None:
+            with open(os.path.join(nusc.dataroot, edited_samples_path, "objects.json"), 'r') as f:
                 self.inserted_boxes = json.load(f)
+                assert isinstance(self.inserted_boxes, dict), "Edited samples must be a dictionary."
         else:
             self.inserted_boxes = None
+
+        self.restrict_eval = edited_objects_restrict
+        assert not (self.restrict_eval and self.inserted_boxes is None), "If restrict_eval is True, edited_samples_path must be provided."
 
         # Add center distances.
         self.pred_boxes = add_center_dist(nusc, self.pred_boxes)
@@ -140,7 +145,10 @@ class DetectionEval:
         metric_data_list = DetectionMetricDataList()
         for class_name in self.cfg.class_names:
             for dist_th in self.cfg.dist_ths:
-                md = accumulate(self.gt_boxes, self.pred_boxes, class_name, self.cfg.dist_fcn_callable, dist_th, inserted_boxes=self.inserted_boxes)
+                md = accumulate(
+                    self.gt_boxes, self.pred_boxes, class_name, self.cfg.dist_fcn_callable, dist_th,
+                    restricted=self.restrict_eval, inserted_boxes=self.inserted_boxes
+                )
                 metric_data_list.set(class_name, dist_th, md)
 
         # -----------------------------------

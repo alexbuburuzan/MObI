@@ -23,8 +23,15 @@ This should dump the evaluation results in `./results` for your peruse.
 
 You can then add (and combine) the following eval-options:
 - edited_samples_path: use the edited samples instead of the normal samples (both camera and lidar)
-- edited_objects_list: restrict the evalution to the objects defined in the list (in format {sample_token: trajectory_id}
+- edited_objects_restrict: restrict the evalution to the objects defined in the list (in format {sample_token: trajectory_id})
 For example, to run the restricted evaluation on edited samples, run
 ```
-torchpack dist-run -np 2 python tools/test.py configs/nuscenes/det/transfusion/secfpn/camera+lidar/swint_v0p075/convfuser.yaml pretrained/bevfusion-det.pth --eval bbox --eval-options jsonfile_prefix=results edited_samples_path=samples-edited edited_objects_list=samples-edited/objects.json
+torchpack dist-run -np 2 python tools/test.py configs/nuscenes/det/transfusion/secfpn/camera+lidar/swint_v0p075/convfuser.yaml pretrained/bevfusion-det.pth --eval bbox --eval-options jsonfile_prefix=results edited_samples_path=samples-edited edited_objects_restrict=1
+```
+
+## Visualisation
+
+We've also modified the visualisation script in order to pick samples edited by MObi. Here is how you can run the visualisation script on edited samples:
+```
+torchpack dist-run -np 2 python tools/visualize.py configs/nuscenes/det/transfusion/secfpn/camera+lidar/swint_v0p075/convfuser.yaml --checkpoint pretrained/bevfusion-det.pth --mode pred --out-dir viz-mobi --edited-samples-path samples-edited
 ```
