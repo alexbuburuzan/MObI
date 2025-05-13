@@ -1,196 +1,77 @@
-# MObI: Multimodal Object Inpainting Using Diffusion Models
+# 🐳 MObI: Multimodal Object Inpainting Using Diffusion Models
 
-This repository is based on "Paint by Example: Exemplar-based Image Editing with Diffusion Models"
+[![arXiv](https://img.shields.io/badge/arXiv-2501.03173-b31b1b.svg)](https://arxiv.org/abs/2501.03173)
+[![Paper](https://img.shields.io/badge/Paper-PDF-blue)](https://arxiv.org/pdf/2501.03173)
+[![CVPR Workshop](https://img.shields.io/badge/CVPR_Workshop-DDADS-green)](https://agents4ad.github.io/)
 
-## Paint by Example: Exemplar-based Image Editing with Diffusion Models
+Official implementation of "MObI: Multimodal Object Inpainting Using Diffusion Models" - CVPR Workshop on Data-Driven Autonomous Driving Simulation (DDADS)
 
-![Teaser](figure/teaser.png)
-### [Paper](https://arxiv.org/abs/2211.13227) | [Huggingface Demo](https://huggingface.co/spaces/Fantasy-Studio/Paint-by-Example) 
-<!-- <br> -->
-[Binxin Yang](https://orcid.org/0000-0003-4110-1986), [Shuyang Gu](http://home.ustc.edu.cn/~gsy777/), [Bo Zhang](https://bo-zhang.me/), [Ting Zhang](https://www.microsoft.com/en-us/research/people/tinzhan/), [Xuejin Chen](http://staff.ustc.edu.cn/~xjchen99/), [Xiaoyan Sun](http://staff.ustc.edu.cn/~xysun720/), [Dong Chen](https://www.microsoft.com/en-us/research/people/doch/) and [Fang Wen](https://www.microsoft.com/en-us/research/people/fangwen/).
-<!-- <br> -->
+<p align="center">
+  <img src="assets/teaser_video.gif" alt="MObI Demo" width="80%"/>
+</p>
 
 ## Abstract
->Language-guided image editing has achieved great success recently. In this paper, for the first time, we investigate exemplar-guided image editing for more precise control. We achieve this goal by leveraging self-supervised training to disentangle and re-organize the source image and the exemplar. However, the naive approach will cause obvious fusing artifacts. We carefully analyze it and propose an information bottleneck and strong augmentations to avoid the trivial solution of directly copying and pasting the exemplar image. Meanwhile, to ensure the controllability of the editing process, we design an arbitrary shape mask for the exemplar image and leverage the classifier-free guidance to increase the similarity to the exemplar image. The whole framework involves a single forward of the diffusion model without any iterative optimization. We demonstrate that our method achieves an impressive performance and enables controllable editing on in-the-wild images with high fidelity.
->
-## News
-- *2023-11-28* The recent work Asymmetric VQGAN improves the preservation of details in non-masked regions. For comprehensive details, please refer to the associated [paper](https://arxiv.org/abs/2306.04632), [github]( https://github.com/buxiangzhiren/Asymmetric_VQGAN).
-- *2023-05-13* Release code for quantitative results.
-- *2023-03-03* Release test benchmark.
-- *2023-02-23* Non-official 3rd party apps support by [ModelScope](https://www.modelscope.cn/models/damo/cv_stable-diffusion_paint-by-example/summary) (the largest Model Community in Chinese).
-- *2022-12-07* Release a [Gradio](https://gradio.app/) demo on [Hugging Face](https://huggingface.co/spaces/Fantasy-Studio/Paint-by-Example) Spaces.
-- *2022-11-29* Upload code.
+
+Safety-critical applications, such as autonomous driving, require extensive multimodal data for rigorous testing. Methods based on synthetic data are gaining prominence due to the cost and complexity of gathering real-world data but require a high degree of realism and controllability in order to be useful. This paper introduces MObI, a novel framework for **M**ultimodal **Ob**ject **I**npainting that leverages a diffusion model to create realistic and controllable object inpaintings across perceptual modalities, demonstrated for both camera and lidar simultaneously. Using a single reference RGB image, MObI enables objects to be seamlessly inserted into existing multimodal scenes at a 3D location specified by a bounding box, while maintaining semantic consistency and multimodal coherence. Unlike traditional inpainting methods that rely solely on edit masks, our 3D bounding box conditioning gives objects accurate spatial positioning and realistic scaling. As a result, our approach can be used to insert novel objects flexibly into multimodal scenes, providing significant advantages for testing perception models.
+
+> **Note:** 🚧 This repository is currently under construction. Proper documentation, installation instructions, and usage examples will be provided soon. 🚧
+
+## Features
+
+- Joint inpainting across multiple modalities (RGB camera, lidar depth and intensity)
+- Object insertion using just a single reference image
+- 3D bounding box conditioning for accurate spatial positioning
+- Improved controllability compared to traditional inpainting methods
 
 
-## Requirements
-A suitable [conda](https://conda.io/) environment named `Paint-by-Example` can be created
-and activated with:
 
-```
-conda env create -f environment.yaml
-conda activate Paint-by-Example
-```
+## Architecture
 
-## Pretrained Model
-We provide the checkpoint ([Google Drive](https://drive.google.com/file/d/15QzaTWsvZonJcXsNv-ilMRCYaQLhzR_i/view?usp=share_link) | [Hugging Face](https://huggingface.co/Fantasy-Studio/Paint-by-Example/resolve/main/model.ckpt)) that is trained on [Open-Images](https://storage.googleapis.com/openimages/web/index.html) for 40 epochs. By default, we assume that the pretrained model is downloaded and saved to the directory `checkpoints`.
+<p align="center">
+  <img src="assets/architecture.jpg" alt="MObI Architecture" width="100%"/>
+</p>
 
-## Testing
+MObI extends Paint-by-Example, a reference-based image inpainting method, to include bounding box conditioning and jointly generate camera and lidar perception inputs.
 
-To sample from our model, you can use `scripts/inference.py`. For example, 
-```
-python scripts/inference.py \
---plms --outdir results \
---config configs/v1.yaml \
---ckpt checkpoints/model.ckpt \
---image_path examples/image/example_1.png \
---mask_path examples/mask/example_1.png \
---reference_path examples/reference/example_1.jpg \
---seed 321 \
---scale 5
-```
-or simply run:
-```
-sh test.sh
-```
-Visualization of inputs and output:
+## Motivation
 
-![](figure/result_1.png)
-![](figure/result_2.png)
-![](figure/result_3.png)
+MObI addresses limitations in existing approaches:
 
-## Training
+1. **Object inpainting methods based on edit masks alone** (e.g., Paint-by-Example) achieve high realism but can lead to surprising results because there are often multiple semantically consistent ways to inpaint an object within a scene.
 
-### Data preparing
-- Download separate packed files of Open-Images dataset from [CVDF's site](https://github.com/cvdfoundation/open-images-dataset#download-images-with-bounding-boxes-annotations) and unzip them to the directory `dataset/open-images/images`.
-- Download bbox annotations of Open-Images dataset from [Open-Images official site](https://storage.googleapis.com/openimages/web/download_v7.html#download-manually) and save them to the directory `dataset/open-images/annotations`.
-- Generate bbox annotations of each image in txt format.
-    ```
-    python scripts/read_bbox.py
-    ```
+2. **Methods based on 3D reconstruction** (e.g., NeuRAD) have strong controllability but sometimes lead to low realism, especially for object viewpoints that have not been observed.
 
-The data structure is like this:
-```
-dataset
-├── open-images
-│  ├── annotations
-│  │  ├── class-descriptions-boxable.csv
-│  │  ├── oidv6-train-annotations-bbox.csv
-│  │  ├── test-annotations-bbox.csv
-│  │  ├── validation-annotations-bbox.csv
-│  ├── images
-│  │  ├── train_0
-│  │  │  ├── xxx.jpg
-│  │  │  ├── ...
-│  │  ├── train_1
-│  │  ├── ...
-│  │  ├── validation
-│  │  ├── test
-│  ├── bbox
-│  │  ├── train_0
-│  │  │  ├── xxx.txt
-│  │  │  ├── ...
-│  │  ├── train_1
-│  │  ├── ...
-│  │  ├── validation
-│  │  ├── test
+## Installation
+
+```bash
+git clone https://github.com/alexbuburuzan/MObI.git
+cd MObI
+conda env create -f environment.yml
 ```
 
-### Download the pretrained model of Stable Diffusion
-We utilize the pretrained Stable Diffusion v1-4 as initialization, please download the pretrained models from [Hugging Face](https://huggingface.co/CompVis/stable-diffusion-v-1-4-original) and save the model to directory `pretrained_models`. Then run the following script to add zero-initialized weights for 5 additional input channels of the UNet (4 for the encoded masked-image and 1 for the mask itself).
-```
-python scripts/modify_checkpoints.py
+## Usage
+
+```python
+# Example scripts for using MObI will be provided here
 ```
 
-### Training Paint by Example
-To train a new model on Open-Images, you can use `main.py`. For example,
-```
-python -u main.py \
---logdir models/Paint-by-Example \
---pretrained_model pretrained_models/sd-v1-4-modified-9channel.ckpt \
---base configs/v1.yaml \
---scale_lr False
-```
-or simply run:
-```
-sh train.sh
-```
+## Citation
 
-## Test Benchmark
-We build a test benchmark for quantitative analysis. Specifically, we manually select 3500 source images from MSCOCO validation set, each image contains only one bounding box. Then we manually retrieve a reference image patch from MSCOCO training set. The reference image usually shares a similar semantic with mask region to ensure the combination is reasonable. We named it as COCO Exemplar-based image Editing benchmark, abbreviated as COCOEE. This test benchmark can be downloaded from [Google Drive](https://drive.google.com/file/d/18wO_wSFF-GPNxWmO1bt6LdjubXcttqtO/view?usp=share_link).
+If you find our work useful in your research, please consider citing:
 
-## Quantitative Results
-By default, we assume that the COCOEE is downloaded and saved to the directory `test_bench`. To generate the results of test bench, you can use `scripts/inference_test_bench.py`. For example, 
-```
-python scripts/inference_test_bench.py \
---plms \
---outdir results/test_bench \
---config configs/v1.yaml \
---ckpt checkpoints/model.ckpt \
---scale 5
-```
-or simply run:
-```
-bash inference_test_bench.sh
-```
-### FID Score
-By default, we assume that the test set of COCO2017 is downloaded and saved to the directory `dataset`.
-The data structure is like this:
-```
-dataset
-├── coco
-│  ├── test2017
-│  │  ├── xxx.jpg
-│  │  ├── xxx.jpg
-│  │  ├── ...
-│  │  ├── xxx.jpg
-```
-Then convert the images into square images with 512 solution.
-  ```
-  python scripts/create_square_gt_for_fid.py
-  ```
-To calculate FID score, simply run:
-```
-python eval_tool/fid/fid_score.py --device cuda \
-test_bench/test_set_GT \
-results/test_bench/results
-```
-### QS Score
-Please download the model weights for QS score from [Google Drive](https://drive.google.com/file/d/1Ce2cSQ8UttxcEk03cjfJgaBwdhSPyuHI/view?usp=share_link) and save the model to directory `eval_tool/gmm`.
-To calculate QS score, simply run:
-```
-python eval_tool/gmm/gmm_score_coco.py results/test_bench/results \
---gmm_path eval_tool/gmm/coco2017_gmm_k20 \
---gpu 1
-```
-
-### CLIP Score
-To calculate CLIP score, simply run:
-```
-python eval_tool/clip_score/region_clip_score.py \
---result_dir results/test_bench/results
-```
-
-
-## Citing Paint by Example
-
-```
-@article{yang2022paint,
-  title={Paint by Example: Exemplar-based Image Editing with Diffusion Models},
-  author={Binxin Yang and Shuyang Gu and Bo Zhang and Ting Zhang and Xuejin Chen and Xiaoyan Sun and Dong Chen and Fang Wen},
-  journal={arXiv preprint arXiv:2211.13227},
-  year={2022}
+```bibtex
+@article{buburuzan2025mobi,
+  title={MObI: Multimodal Object Inpainting Using Diffusion Models},
+  author={Buburuzan, Alexandru and Sharma, Anuj and Redford, John and Dokania, Puneet K and Mueller, Romain},
+  journal={arXiv preprint arXiv:2501.03173},
+  year={2025}
 }
 ```
 
+## License
+
+See the [LICENSE](LICENSE) file for details.
+
 ## Acknowledgements
 
-This code borrows heavily from [Stable Diffusion](https://github.com/CompVis/stable-diffusion). We also thank the contributors of [OpenAI's ADM codebase](https://github.com/openai/guided-diffusion) and [https://github.com/lucidrains/denoising-diffusion-pytorch](https://github.com/lucidrains/denoising-diffusion-pytorch).
-
-## Maintenance
-
-Please open a GitHub issue for any help. If you have any questions regarding the technical details, feel free to contact us.
-
-## License
-The codes and the pretrained model in this repository are under the CreativeML OpenRAIL M license as specified by the LICENSE file.
-
-The test benchmark, COCOEE, belongs to the COCO Consortium and are licensed under a Creative Commons Attribution 4.0 License.
+- Work done during Alexandru Buburuzan's internship at FiveAI
