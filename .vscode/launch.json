@@ -1,0 +1,69 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Train",
+            "type": "python",
+            "justMyCode": true,
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "args": [
+                "--logdir", "models/Paint-by-Example",
+                "--pretrained_model", "checkpoints/model.ckpt",
+                "--base", "configs/nusc_control_multimodal.yaml",
+                "--scale_lr", "False"
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Test Bench",
+            "type": "python",
+            "justMyCode": true,
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/inference_test_bench.py",
+            "args": [
+                "--plms",
+                "--outdir", "results_test_bench_multimodal/dummy",
+                "--config", "configs/nusc_control_multimodal.yaml",
+                "--ckpt", "checkpoints/model.ckpt",
+                "--scale", "5",
+                "--ddim_steps", "1",
+                "--n_samples", "2",
+                "--save_samples",
+                "--save_visualisations",
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Rotation Test",
+            "type": "python",
+            "justMyCode": true,
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/inference_test_bench.py",
+            "args": [
+                "--plms",
+                "--outdir", "results_test_rotate/exp",
+                "--config", "configs/nusc_control.yaml",
+                "--ckpt", "checkpoints/model.ckpt",
+                "--scale", "5",
+                "--n_samples", "1",
+                "--rotation_test",
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Train autoencoder",
+            "type": "python",
+            "justMyCode": true,
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "args": [
+                "--logdir", "models/autoencoder",
+                "--pretrained_model", "checkpoints/image_vae.ckpt",
+                "--base", "configs/range_autoencoder.yaml",
+                "--scale_lr", "False"
+            ],
+            "console": "integratedTerminal"
+        },
+    ]
+}

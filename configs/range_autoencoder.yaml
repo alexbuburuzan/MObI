@@ -1,0 +1,122 @@
+use_camera: False
+use_lidar: True
+
+image_height: 256
+image_width: 256
+object_area_crop: 0.2
+
+range_height: 256
+range_width: 256 # use feature map crop instead of range crop
+
+batch_size: 16
+range_object_norm: True
+range_object_norm_scale: 0.75
+range_int_norm: True
+num_workers_per_gpu: 8
+
+classes:
+  - car
+  - pedestrian
+  - traffic_cone
+  - truck
+  - construction_vehicle
+  - bus
+  - trailer
+  - barrier
+  - motorcycle
+  - bicycle
+
+model:
+  base_learning_rate: 4.5e-5
+  target: ldm.models.autoencoder.AutoencoderKL
+  params:
+    embed_dim: 4
+    monitor: val/rec_loss
+    ckpt_path: "checkpoints/autoencoder/image_vae.ckpt"
+    image_key: "lidar"
+    range_object_norm: ${range_object_norm}
+    range_object_norm_scale: ${range_object_norm_scale}
+    range_int_norm: ${range_int_norm}
+
+    lossconfig:
+      target: ldm.modules.losses.LidarWithDiscriminator
+      params:
+        disc_start: 50001
+        kl_weight: 0.000001
+        disc_weight: 0.5
+        disc_in_channels: 2
+
+    ddconfig:
+      double_z: true
+      z_channels: 4
+      resolution: ${image_height}
+      in_channels: 2
+      out_ch: 2
+      ch: 128
+      ch_mult:
+      - 1
+      - 2
+      - 4
+      - 4
+      num_res_blocks: 2
+      lidar_adapter: True
+      attn_resolutions: []
+      dropout: 0.0
+
+data:
+  target: main.DataModuleFromConfig
+  params:
+      batch_size: ${batch_size}
+      num_workers_per_gpu: ${num_workers_per_gpu}
+      wrap: False
+      train:
+          target: ldm.data.nuscenes.NuScenesDataset
+          params:
+              state: train
+              use_lidar: ${use_lidar}
+              use_camera: ${use_camera}
+              object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_train.csv
+              scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_train.pkl
+              expand_mask_ratio: 0.1
+              expand_ref_ratio: 0
+              object_area_crop: ${object_area_crop}
+              ref_aug: True
+              ref_mode: same-ref
+              image_height: ${image_height}
+              image_width: ${image_width}
+              range_height: ${range_height}
+              range_width: ${range_width}
+              object_classes: ${classes}
+              random_range_crop: False
+              range_object_norm: ${range_object_norm}
+              range_object_norm_scale: ${range_object_norm_scale}
+              range_int_norm: ${range_int_norm}
+      validation:
+          target: ldm.data.nuscenes.NuScenesDataset
+          params:
+              state: val
+              use_lidar: ${use_lidar}
+              use_camera: ${use_camera}
+              object_database_path: data/nuscenes/nuscenes_dbinfos_pbe_val.csv
+              scene_database_path: data/nuscenes/nuscenes_scene_infos_pbe_val.pkl
+              expand_mask_ratio: 0.1
+              expand_ref_ratio: 0
+              object_area_crop: ${object_area_crop}
+              ref_aug: True
+              ref_mode: same-ref
+              image_height: ${image_height}
+              image_width: ${image_width}
+              range_height: ${range_height}
+              range_width: ${range_width}
+              object_classes: ${classes}
+              random_range_crop: False
+              range_object_norm: ${range_object_norm}
+              range_object_norm_scale: ${range_object_norm_scale}
+              range_int_norm: ${range_int_norm}
+
+lightning:
+  trainer:
+    max_epochs: 8
+    num_nodes: 1
+    accelerator: 'gpu'
+    gpus: "0"
