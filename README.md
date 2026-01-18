@@ -1,7 +1,7 @@
 # 🐳 MObI: Multimodal Object Inpainting Using Diffusion Models
 
 [![arXiv](https://img.shields.io/badge/arXiv-2501.03173-b31b1b.svg)](https://arxiv.org/abs/2501.03173)
-[![Paper](https://img.shields.io/badge/Paper-PDF-blue)](https://arxiv.org/pdf/2501.03173)
+[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Models-yellow)](https://huggingface.co/alexbuburuzan/MObI)
 [![CVPR Workshop](https://img.shields.io/badge/CVPR_Workshop-DDADS-green)](https://agents4ad.github.io/)
 
 Official implementation of "MObI: Multimodal Object Inpainting Using Diffusion Models" - CVPR Workshop on Data-Driven Autonomous Driving Simulation (DDADS)
