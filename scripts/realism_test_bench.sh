@@ -1,3 +1,5 @@
+cd $WORK_DIR_MOBI
+
 nvidia-smi
 conda activate mobi
 
@@ -90,14 +92,14 @@ run_experiment() {
 }
 
 # MObI Experiment
-# run_experiment "models/MObI/2024-09-17T21-26-14_nusc_control_multimodal/checkpoints" \
-#     "${CONFIG_DIR}/mobi_nusc_512.yaml" \
-#     "512_ablations/MObI/2024-09-17T21-26-14_mobi_nusc_512_best" \
-#     "True" \
-#     "50" \
-#     "Model,Reference Type,FID,LPIPS,CLIP,D-LPIPS,I-LPIPS" \
-#     "False" \
-#     "8"
+run_experiment "checkpoints/mobi_nusc_512" \
+    "${CONFIG_DIR}/mobi_nusc_512.yaml" \
+    "512_ablations/MObI/mobi_nusc_512_best" \
+    "True" \
+    "50" \
+    "Model,Reference Type,FID,LPIPS,CLIP,D-LPIPS,I-LPIPS" \
+    "False" \
+    "8"
 
 # # Copy-Paste Experiment (with --copy-paste flag)
 # run_experiment "checkpoints" \

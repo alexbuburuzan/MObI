@@ -1,3 +1,5 @@
+cd $WORK_DIR_MOBI
+
 nvidia-smi
 conda activate mobi
 

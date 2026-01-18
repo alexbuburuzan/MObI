@@ -1,8 +1,10 @@
+cd $WORK_DIR_MOBI
+
 # Run the inference test bench script with the appropriate arguments
 python3 scripts/inference_test_bench.py \
     --plms \
     --outdir results/lidar_VAE/adapter \
-    --config "configs/nusc_control_multimodal.yaml" \
+    --config "configs/mobi_nusc_all-classes_512.yaml" \
     --ckpt "models/MObI/2024-08-03T19-20-00_nusc_control_multimodal/checkpoints/epoch=000025.ckpt" \
     --scale "5" \
     --ddim_steps "1" \

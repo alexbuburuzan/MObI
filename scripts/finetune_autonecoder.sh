@@ -1,3 +1,5 @@
+cd $WORK_DIR_MOBI
+
 conda activate mobi
 
 python -u main.py \
