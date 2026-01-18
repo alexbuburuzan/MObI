@@ -164,13 +164,21 @@ See [bevfusion/edited-objects-eval.md](bevfusion/edited-objects-eval.md) for det
 
 ## Training your own model
 
-Train MObI using Paint-by-Example pretraining and provided range view autoencoder (this codebase provides instructions on how to train your own range view VAE, too):
+Train MObI using Paint-by-Example pretraining and provided range view autoencoder (this codebase provides scripts to train your own range view VAE, too):
 ```
 bash scripts/train.sh
 ```
 The training script will save the top-5 checkpoints. To select the best checkpoint, run a short evaluation on each of them using the following script:
 ```
 bash scripts/model_selection.sh
+```
+
+### Finetuning custom range view VAE
+First, extract the image VAE of Paint-by-Example and then run finetuning script:
+```
+cd WORK_DIR_MOBI
+python scripts/extract_autoencoder.py
+bash scripts/finetune_autonecoder.sh
 ```
 
 ## Citation
