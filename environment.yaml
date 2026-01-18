@@ -157,9 +157,6 @@ dependencies:
     - matplotlib==3.5.3
     - matplotlib-inline==0.1.7
     - mistune==3.0.2
-    - mmcv==1.4.0
-    - mmcv-full==1.4.0
-    - mmdet==2.20.0
     - msgpack==1.0.8
     - msgpack-numpy==0.4.8
     - multidict==6.0.5
