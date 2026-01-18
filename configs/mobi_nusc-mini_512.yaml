@@ -6,7 +6,7 @@ image_width: 512
 latent_size: 64 # image_width // 8
 
 range_height: 512
-range_width: 512 # use feature map crop instead of range crop
+range_width: 512
 
 batch_size: 2
 range_object_norm: True

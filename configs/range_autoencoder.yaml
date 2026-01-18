@@ -6,7 +6,7 @@ image_width: 256
 object_area_crop: 0.2
 
 range_height: 256
-range_width: 256 # use feature map crop instead of range crop
+range_width: 256
 
 batch_size: 16
 range_object_norm: True
