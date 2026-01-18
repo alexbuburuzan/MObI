@@ -2,7 +2,7 @@ import argparse
 from os import path as osp
 
 from tools.data_converter import indoor_converter as indoor
-from tools.data_converter import kitti_converter as kitti
+# from tools.data_converter import kitti_converter as kitti
 # from tools.data_converter import lyft_converter as lyft_converter
 from tools.data_converter import nuscenes_converter as nuscenes_converter
 from tools.data_converter.create_gt_database import create_groundtruth_database
@@ -60,10 +60,10 @@ def nuscenes_data_prep(root_path,
         return
     
     nuscenes_converter.create_nuscenes_infos(
-        root_path, info_prefix, version=version, max_sweeps=max_sweeps
+        root_path, info_prefix, out_dir, version=version, max_sweeps=max_sweeps
     )
 
-    info_path = osp.join(root_path, f'{info_prefix}_infos_{split}.pkl')
+    info_path = osp.join(out_dir, f'{info_prefix}_infos_{split}.pkl')
 
     if not pbe_database:
         print("Exporting 2d annotations")
@@ -82,6 +82,7 @@ def nuscenes_data_prep(root_path,
         create_pbe_database(
             dataset_name,
             root_path,
+            out_dir,
             info_prefix,
             f'{out_dir}/{info_prefix}_infos_{split}.pkl',
             split=split,

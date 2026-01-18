@@ -112,7 +112,7 @@ class LoadPointsFromMultiSweeps:
     ):
         self.load_dim = load_dim
         self.sweeps_num = sweeps_num
-        assert sweeps_num == 1, "MObI only supports sweeps_num=1"
+        assert sweeps_num == 0, "MObI does not support multi-sweep loading."
         if isinstance(use_dim, int):
             use_dim = list(range(use_dim))
         self.use_dim = use_dim

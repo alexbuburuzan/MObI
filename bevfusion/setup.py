@@ -8,14 +8,20 @@ from torch.utils.cpp_extension import BuildExtension, CppExtension, CUDAExtensio
 def make_cuda_ext(
     name, module, sources, sources_cuda=[], extra_args=[], extra_include_path=[]
 ):
-
     define_macros = []
-    extra_compile_args = {"cxx": [] + extra_args}
+    extra_compile_args = {"cxx": ["-D__STRICT_ANSI__"] + extra_args}
 
     if torch.cuda.is_available() or os.getenv("FORCE_CUDA", "0") == "1":
         define_macros += [("WITH_CUDA", None)]
         extension = CUDAExtension
+        
+        # This part ensures nvcc includes our shield file first
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        compat_header = os.path.join(current_dir, "cuda_compat.h")
+
         extra_compile_args["nvcc"] = extra_args + [
+            "-include", compat_header,  # This forces the fix
+            "-D__STRICT_ANSI__",
             "-D__CUDA_NO_HALF_OPERATORS__",
             "-D__CUDA_NO_HALF_CONVERSIONS__",
             "-D__CUDA_NO_HALF2_OPERATORS__",
@@ -27,7 +33,6 @@ def make_cuda_ext(
         ]
         sources += sources_cuda
     else:
-        print("Compiling {} without CUDA".format(name))
         extension = CppExtension
 
     return extension(

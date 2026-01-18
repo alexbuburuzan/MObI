@@ -276,6 +276,7 @@ def check_erase_bbox(gt_bboxes_3d):
 def create_groundtruth_database(
         dataset_class_name,
         data_path,
+        out_dir,
         info_prefix,
         info_path=None,
         database_save_path=None,
@@ -291,6 +292,7 @@ def create_groundtruth_database(
     Args:
         dataset_class_name （str): Name of the input dataset.
         data_path (str): Path of the data.
+        out_dir (str): Output directory to save the info files.
         info_prefix (str): Prefix of the info file.
         info_path (str): Path of the info file.
             Default: None.
@@ -345,12 +347,11 @@ def create_groundtruth_database(
     dataset = build_dataset(dataset_cfg)
 
     if database_save_path is None:
-        database_save_path = osp.join(data_path, f"{info_prefix}_pbe_gt_database_{split}")
+        database_save_path = osp.join(out_dir, f"{info_prefix}_pbe_gt_database_{split}")
     if db_info_save_path is None:
-        db_info_save_path = osp.join(data_path, f"{info_prefix}_dbinfos_pbe_{split}.csv")
+        db_info_save_path = osp.join(out_dir, f"{info_prefix}_dbinfos_pbe_{split}.csv")
     if scene_info_save_path is None:
-        scene_info_save_path = osp.join(data_path, f"{info_prefix}_scene_infos_pbe_{split}.pkl")
-
+        scene_info_save_path = osp.join(out_dir, f"{info_prefix}_scene_infos_pbe_{split}.pkl")
     mmcv.mkdir_or_exist(database_save_path)
     all_db_infos = []
     all_scene_infos = {}

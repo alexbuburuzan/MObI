@@ -39,6 +39,6 @@ def build_dataset(cfg, default_args=None, dataset_kwargs=None):
     elif isinstance(cfg.get("ann_file"), (list, tuple)):
         dataset = _concat_dataset(cfg, default_args)
     else:
-        dataset = build_from_cfg(cfg, DATASETS, default_args, dataset_kwargs)
+        dataset = build_from_cfg(cfg, DATASETS, dataset_kwargs)
 
     return dataset
