@@ -189,9 +189,10 @@ If you find our work useful in your research, please consider citing:
 @inproceedings{buburuzan2025mobi,
   title={Mobi: Multimodal object inpainting using diffusion models},
   author={Buburuzan, Alexandru and Sharma, Anuj and Redford, John and Dokania, Puneet K and Mueller, Romain},
-  booktitle={Proceedings of the Computer Vision and Pattern Recognition Conference},
-  pages={1974--1984},
-  year={2025}
+  booktitle={2025 IEEE/CVF Conference on Computer Vision and Pattern Recognition Workshops (CVPRW)},
+  pages={1965--1975},
+  year={2025},
+  organization={IEEE}
 }
 ```
 
